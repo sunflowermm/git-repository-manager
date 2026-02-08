@@ -1,0 +1,71 @@
+{
+  "name": "git-manager-electron",
+  "version": "2.5.0",
+  "description": "🌻 向日葵Git仓库管理 - Electron版",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:win64": "electron-builder --win --x64",
+    "build:win32": "electron-builder --win --ia32",
+    "dist": "electron-builder --publish=never"
+  },
+  "keywords": [
+    "git",
+    "repository",
+    "manager",
+    "electron"
+  ],
+  "author": "向日葵",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^30.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "simple-git": "^3.25.0"
+  },
+  "build": {
+    "appId": "com.sunflower.gitmanager",
+    "productName": "向日葵Git仓库管理",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!node_modules/.bin/**/*",
+      "!node_modules/**/test/**/*",
+      "!node_modules/**/tests/**/*",
+      "!node_modules/**/*.md",
+      "!node_modules/**/*.txt",
+      "!node_modules/**/LICENSE*",
+      "!node_modules/**/CHANGELOG*",
+      "!node_modules/**/README*",
+      "!node_modules/**/.git/**/*",
+      "!node_modules/**/.github/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/@kwsites/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64",
+            "ia32"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

@@ -47,6 +47,7 @@ function initElements() {
             batch: document.getElementById('btn-batch'),
             help: document.getElementById('btn-help'),
             update: document.getElementById('btn-update'),
+            clearUpdateCache: document.getElementById('btn-clear-update-cache'),
             theme: document.getElementById('btn-theme'),
             commit: document.getElementById('btn-commit'),
             commitPush: document.getElementById('btn-commit-push'),
@@ -165,6 +166,7 @@ function setupEventListeners() {
     btn.batch?.addEventListener('click', openBatchDialog);
     btn.help?.addEventListener('click', showHelp);
     btn.update?.addEventListener('click', checkForUpdates);
+    btn.clearUpdateCache?.addEventListener('click', clearUpdateCache);
     btn.theme?.addEventListener('click', toggleTheme);
     btn.commit?.addEventListener('click', quickCommit);
     btn.commitPush?.addEventListener('click', commitAndPush);
@@ -1823,16 +1825,30 @@ async function viewDiff() {
 
 let updateDownloading = false;
 let updateListenersSetup = false;
+const CHECK_WATCHDOG_MS = 15000;
+let updateCheckWatchdogTimer = null;
+
+function clearUpdateCheckWatchdog() {
+    if (updateCheckWatchdogTimer) {
+        clearTimeout(updateCheckWatchdogTimer);
+        updateCheckWatchdogTimer = null;
+    }
+}
 
 function setupUpdateListeners() {
     if (updateListenersSetup) return;
     updateListenersSetup = true;
     ipcRenderer.on('update-status', handleUpdateStatus);
     ipcRenderer.on('update-progress', handleUpdateProgress);
+    ipcRenderer.on('update-log', (e, { message, level }) => {
+        if (message) log(message, level || 'info');
+    });
 }
 
 function handleUpdateStatus(data) {
     const { status, message, version, releaseNotes } = data;
+    clearUpdateCheckWatchdog();
+    log(`更新: 收到状态 ${status}`, 'info');
     switch (status) {
         case 'available':
             log(`检查完成：发现新版本 v${version}`, 'info');
@@ -1843,10 +1859,11 @@ function handleUpdateStatus(data) {
             showMessage('已是最新版本', 'success');
             break;
         case 'error':
-            log(`更新检查失败: ${message}`, 'error');
-            showMessage(`更新检查失败: ${message}`, 'error');
+            log(message || '检查更新失败', 'error');
+            showMessage(message || '检查更新失败', 'error');
             break;
         case 'downloaded':
+            log(`更新: 已下载 v${version}，弹窗选择重启`, 'info');
             showUpdateDownloadedDialog(version);
             break;
     }
@@ -1975,19 +1992,46 @@ function showUpdateDownloadedDialog(version) {
     showModal('更新已就绪', content, () => installUpdate(), true, { primaryLabel: '立即重启', cancelLabel: '稍后' });
 }
 
+async function clearUpdateCache() {
+    log('更新: 清除缓存请求', 'info');
+    try {
+        const result = await ipcRenderer.invoke('clear-update-cache');
+        if (result.success) {
+            log(`更新: 已清除缓存${result.cleared?.length ? ` (${result.cleared.length} 项)` : ''}`, 'info');
+            showMessage('已清除更新缓存，可重新点击「检查更新」', 'success');
+        }
+    } catch (e) {
+        log(`清除缓存失败: ${e.message}`, 'error');
+        showMessage(`清除缓存失败: ${e.message}`, 'error');
+    }
+}
+
 async function checkForUpdates() {
+    clearUpdateCheckWatchdog();
     log('正在检查更新...', 'info');
     try {
         const result = await ipcRenderer.invoke('check-for-updates');
         if (result.skipped) {
-            log('当前为未打包环境，已跳过更新检查', 'info');
+            log('更新: 未打包环境，已跳过', 'info');
             showMessage('当前为未打包环境，已跳过更新检查', 'info');
             return;
         }
-        if (!result.success) throw new Error(result.error || '检查更新失败');
+        if (!result.success) {
+            const msg = result.error || '检查更新失败';
+            log(msg, 'error');
+            showMessage(msg, 'error');
+            return;
+        }
+        log('更新: 已发起检查，看门狗 15s', 'info');
+        updateCheckWatchdogTimer = setTimeout(() => {
+            updateCheckWatchdogTimer = null;
+            log('更新: 看门狗超时，未收到主进程结果', 'error');
+            showMessage('检查更新超时，请重试', 'error');
+        }, CHECK_WATCHDOG_MS);
     } catch (e) {
-        log(`检查更新失败: ${e.message}`, 'error');
-        showMessage(`检查更新失败: ${e.message}`, 'error');
+        const msg = e.message || '检查更新失败';
+        log(msg, 'error');
+        showMessage(msg, 'error');
     }
 }
 
@@ -1997,20 +2041,25 @@ async function downloadUpdate() {
         return;
     }
     updateDownloading = true;
+    log('更新: 开始下载', 'info');
     try {
         const result = await ipcRenderer.invoke('download-update');
         if (!result.success) throw new Error(result.error || '下载更新失败');
     } catch (e) {
         updateDownloading = false;
         if (document.getElementById('update-progress-bar')) closeModal();
-        showMessage(`下载更新失败: ${e.message}`, 'error');
+        const msg = e.message || '下载更新失败';
+        log(msg, 'error');
+        showMessage(msg, 'error');
     }
 }
 
 async function installUpdate() {
+    log('更新: 执行安装并重启', 'info');
     try {
         await ipcRenderer.invoke('install-update');
     } catch (e) {
+        log(`安装更新失败: ${e.message}`, 'error');
         showMessage(`安装更新失败: ${e.message}`, 'error');
     }
 }

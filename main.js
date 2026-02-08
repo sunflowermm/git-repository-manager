@@ -115,9 +115,8 @@ autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
 
 const GH_PROXY_HOST = 'gh-proxy.com';
-const CHECK_TIMEOUT_MS = 15000;
+const CHECK_TIMEOUT_MS = 12000;
 
-/** 将 GitHub 请求改为走 gh-proxy：最终请求为 https://gh-proxy.com/https://github.com/... */
 function applyGhProxy(https) {
   const orig = https.request;
   https.request = function (options, callback) {
@@ -136,64 +135,72 @@ function removeGhProxy(https, orig) {
   if (https && orig) https.request = orig;
 }
 
-/** 先直连 GitHub，失败再走 GH 代理（避免代理对 release 返回 404 导致误判） */
-async function runWithDirectFirstThenProxy(fn) {
+function sendUpdateStatus(status, payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-status', { status, ...payload });
+  }
+}
+
+function sendUpdateLog(message, level = 'info') {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-log', { message, level });
+  }
+}
+
+function runCheckWithTimeout() {
+  return Promise.race([
+    autoUpdater.checkForUpdates(),
+    new Promise((_, rej) => setTimeout(() => rej(new Error('检查更新超时，请检查网络')), CHECK_TIMEOUT_MS))
+  ]);
+}
+
+async function performUpdateCheck() {
+  sendUpdateLog('更新: 直连检查中(12s 超时)', 'info');
   try {
-    return await fn();
+    const result = await runCheckWithTimeout();
+    sendUpdateLog('更新: 直连检查完成', 'info');
+    return result;
   } catch (e1) {
+    sendUpdateLog(`更新: 直连失败，改用代理重试 (${e1.message || ''})`, 'info');
     const https = require('https');
     const orig = applyGhProxy(https);
     try {
-      return await fn();
+      const result = await runCheckWithTimeout();
+      sendUpdateLog('更新: 代理检查完成', 'info');
+      return result;
     } finally {
       removeGhProxy(https, orig);
     }
   }
 }
 
-function sendUpdateError(message) {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('update-status', { status: 'error', message });
-  }
-}
-
 function doCheckForUpdates() {
   if (!app.isPackaged || process.env.NODE_ENV === 'development') return;
-  runWithDirectFirstThenProxy(() =>
-    Promise.race([
-      autoUpdater.checkForUpdates(),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('检查更新超时，请检查网络')), CHECK_TIMEOUT_MS))
-    ])
-  ).catch((err) => {
-    sendUpdateError(err.message || '检查更新失败');
+  setImmediate(() => {
+    performUpdateCheck().catch((err) => {
+      sendUpdateStatus('error', { message: err.message || '检查更新失败' });
+    });
   });
 }
 
 autoUpdater.on('update-available', (info) => {
-  if (mainWindow) {
-    mainWindow.webContents.send('update-status', {
-      status: 'available',
-      message: `发现新版本 v${info.version}`,
-      version: info.version,
-      releaseNotes: info.releaseNotes
-    });
-  }
+  sendUpdateStatus('available', {
+    message: `发现新版本 v${info.version}`,
+    version: info.version,
+    releaseNotes: info.releaseNotes
+  });
 });
 
 autoUpdater.on('update-not-available', () => {
-  if (mainWindow) {
-    mainWindow.webContents.send('update-status', { status: 'not-available', message: '已是最新版本' });
-  }
+  sendUpdateStatus('not-available', { message: '已是最新版本' });
 });
 
 autoUpdater.on('error', (err) => {
-  if (mainWindow) {
-    mainWindow.webContents.send('update-status', { status: 'error', message: `更新检查失败: ${err.message}` });
-  }
+  sendUpdateStatus('error', { message: err.message ? `更新检查失败: ${err.message}` : '检查更新失败' });
 });
 
 autoUpdater.on('download-progress', (progressObj) => {
-  if (mainWindow) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('update-progress', {
       percent: Math.round(progressObj.percent),
       transferred: progressObj.transferred,
@@ -203,13 +210,7 @@ autoUpdater.on('download-progress', (progressObj) => {
 });
 
 autoUpdater.on('update-downloaded', (info) => {
-  if (mainWindow) {
-    mainWindow.webContents.send('update-status', {
-      status: 'downloaded',
-      message: '更新已下载完成，将在重启后安装',
-      version: info.version
-    });
-  }
+  sendUpdateStatus('downloaded', { message: '更新已下载完成', version: info.version });
 });
 
 app.whenReady().then(() => {
@@ -233,19 +234,31 @@ app.on('activate', () => {
 
 ipcMain.handle('check-for-updates', async () => {
   if (!app.isPackaged) return { success: true, skipped: true, reason: 'unpacked' };
-  runWithDirectFirstThenProxy(() =>
-    Promise.race([
-      autoUpdater.checkForUpdates(),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('检查更新超时，请检查网络')), CHECK_TIMEOUT_MS))
-    ])
-  ).catch((err) => sendUpdateError(err.message || '检查更新失败'));
+  setImmediate(() => {
+    performUpdateCheck().catch((err) => {
+      sendUpdateStatus('error', { message: err.message || '检查更新失败' });
+    });
+  });
   return { success: true };
 });
 
 ipcMain.handle('download-update', async () => {
   try {
-    await runWithDirectFirstThenProxy(() => autoUpdater.downloadUpdate());
-    return { success: true };
+    sendUpdateLog('更新: 下载中(直连)', 'info');
+    try {
+      await autoUpdater.downloadUpdate();
+      return { success: true };
+    } catch (e1) {
+      sendUpdateLog('更新: 直连下载失败，改用代理', 'info');
+      const https = require('https');
+      const orig = applyGhProxy(https);
+      try {
+        await autoUpdater.downloadUpdate();
+        return { success: true };
+      } finally {
+        removeGhProxy(https, orig);
+      }
+    }
   } catch (e) {
     return { success: false, error: e.message };
   }
@@ -259,6 +272,25 @@ ipcMain.handle('install-update', async () => {
 ipcMain.handle('get-app-version', () => {
   return app.getVersion();
 });
+
+function clearUpdateCache() {
+  const cleared = [];
+  const userData = app.getPath('userData');
+  const tryRemove = (dir) => {
+    try {
+      if (fs.existsSync(dir)) {
+        fs.rmSync(dir, { recursive: true });
+        cleared.push(dir);
+      }
+    } catch (e) {}
+  };
+  tryRemove(path.join(userData, 'pending'));
+  tryRemove(path.join(userData, 'Caches', 'com.github.electron.updater'));
+  tryRemove(path.join(userData, 'Caches', 'electron-updater'));
+  return { success: true, cleared };
+}
+
+ipcMain.handle('clear-update-cache', () => clearUpdateCache());
 
 // 选择文件夹
 ipcMain.handle('select-folder', async () => {

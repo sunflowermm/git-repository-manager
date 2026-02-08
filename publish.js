@@ -14,13 +14,11 @@ console.log('✅ 已加载 GH_TOKEN');
 
 const historyDir = path.join(__dirname, 'history');
 let releaseNotes = '';
+const changelogPath = path.join(historyDir, `v${version}.md`);
 
-if (existsSync(historyDir)) {
-  const files = readdirSync(historyDir).filter(f => f.endsWith('.md')).sort().reverse();
-  if (files.length > 0) {
-    releaseNotes = readFileSync(path.join(historyDir, files[0]), 'utf-8');
-    console.log(`📝 已读取更新日志: ${files[0]}\n`);
-  }
+if (existsSync(changelogPath)) {
+  releaseNotes = readFileSync(changelogPath, 'utf-8');
+  console.log(`📝 已读取更新日志: v${version}.md\n`);
 }
 
 if (!releaseNotes) {

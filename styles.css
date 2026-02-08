@@ -1082,6 +1082,80 @@ select {
     to { transform: rotate(360deg); }
 }
 
+@keyframes slideDown {
+    from { 
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to { 
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.update-notes {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-color) var(--bg-tertiary);
+}
+
+.update-notes::-webkit-scrollbar {
+    width: 6px;
+}
+
+.update-notes::-webkit-scrollbar-track {
+    background: var(--bg-tertiary);
+    border-radius: 3px;
+}
+
+.update-notes::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 3px;
+}
+
+.update-notes::-webkit-scrollbar-thumb:hover {
+    background: var(--text-secondary);
+}
+
+.update-notes h3 {
+    margin: 12px 0 8px 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    border-bottom: 2px solid var(--primary);
+    padding-bottom: 4px;
+}
+
+.update-notes h4 {
+    margin: 10px 0 6px 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.update-notes h5 {
+    margin: 8px 0 4px 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.update-notes ul {
+    margin: 8px 0;
+    padding-left: 20px;
+}
+
+.update-notes li {
+    margin: 4px 0;
+    line-height: 1.6;
+    color: var(--text-secondary);
+}
+
+.update-notes p {
+    margin: 6px 0;
+    line-height: 1.6;
+    color: var(--text-secondary);
+}
+
 /* 响应式设计 */
 .main-content {
     transition: grid-template-columns var(--transition-normal) ease;

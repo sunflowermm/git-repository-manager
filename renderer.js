@@ -138,21 +138,14 @@ async function loadConfig() {
     applyTheme(state.theme);
 }
 
-// 清理平台配置对象（深度清理）
-function sanitizePlatformConfigs(platformConfigs) {
-    if (!platformConfigs || typeof platformConfigs !== 'object') return {};
-    const cleaned = {};
-    for (const platform in platformConfigs) {
-        cleaned[platform] = sanitizeConfig(platformConfigs[platform]);
-    }
-    return cleaned;
-}
 
 // 保存配置
 async function saveConfig() {
     const config = {
         repo_paths: state.repoPaths,
-        platform_configs: sanitizePlatformConfigs(state.platformConfig),
+        platform_configs: Object.fromEntries(
+            Object.entries(state.platformConfig).map(([k, v]) => [k, sanitizeConfig(v)])
+        ),
         sync_config: state.syncConfig,
         theme: state.theme,
         autoRefreshEnabled: state.autoRefreshEnabled,
@@ -771,7 +764,12 @@ async function commitAndSync() {
                 continue;
             }
             const subPlatform = subRepo ? subRepo.platform : 'GitHub';
-            const subConfig = sanitizeConfig(state.platformConfig[subPlatform] || {});
+            let subConfig = sanitizeConfig(state.platformConfig[subPlatform] || {});
+            
+            // 如果从仓库配置缺少用户信息，使用主仓库配置
+            if ((!subConfig.username || !subConfig.email) && config.username && config.email) {
+                subConfig = { ...subConfig, username: config.username, email: config.email };
+            }
             
             const syncResult = await ipcRenderer.invoke('sync-repos', state.currentRepo.path, subPath, message, config, subConfig);
             if (!syncResult.success) {
@@ -1295,7 +1293,7 @@ window.deselectAllBatchRepos = function() {
 function showHelp() {
     const helpContent = `
         <div style="max-height: 500px; overflow-y: auto; font-size: 13px; line-height: 1.6;">
-            <h3 style="color: var(--primary); margin-bottom: 12px; font-size: 16px;">🌻 向日葵Git仓库管理 v2.5</h3>
+            <h3 style="color: var(--primary); margin-bottom: 12px; font-size: 16px;">🌻 向日葵Git仓库管理</h3>
             <h4 style="margin-top: 15px; margin-bottom: 8px; font-size: 14px;">快速开始</h4>
             <ol style="padding-left: 20px;">
                 <li>点击「添加仓库」选择任意位置的 Git 项目目录（路径会保存到本地）</li>
@@ -1322,22 +1320,25 @@ function showHelp() {
 }
 
 // 显示模态框
-function showModal(title, content, onConfirm, showCancel = true) {
+// options: { primaryLabel?, cancelLabel? } 用于自定义主按钮/取消按钮文案
+function showModal(title, content, onConfirm, showCancel = true, options = {}) {
     const overlay = document.getElementById('modal-overlay');
     const modalContent = document.getElementById('modal-content');
-    
+    const primaryLabel = options.primaryLabel ?? (onConfirm ? '确定' : '关闭');
+    const cancelLabel = options.cancelLabel ?? '取消';
+
     let html = `<div class="modal-header">${title}</div><div class="modal-body">${content}</div><div class="modal-footer">`;
-    
+
     if (showCancel && onConfirm) {
-        html += `<button class="btn btn-secondary" onclick="closeModal()">取消</button>`;
+        html += `<button class="btn btn-secondary" onclick="closeModal()">${cancelLabel}</button>`;
     }
-    
+
     if (onConfirm) {
-        html += `<button class="btn btn-primary" onclick="confirmModal()">确定</button>`;
+        html += `<button class="btn btn-primary" onclick="confirmModal()">${primaryLabel}</button>`;
     } else {
-        html += `<button class="btn btn-primary" onclick="closeModal()">关闭</button>`;
+        html += `<button class="btn btn-primary" onclick="closeModal()">${primaryLabel}</button>`;
     }
-    
+
     html += `</div>`;
     modalContent.innerHTML = html;
     
@@ -1350,7 +1351,7 @@ function showModal(title, content, onConfirm, showCancel = true) {
                     closeModal();
                 }
             } catch (error) {
-                console.error('Modal confirm error:', error);
+                log(`Modal confirm error: ${error.message}`, 'error');
                 closeModal();
             }
         };
@@ -1827,18 +1828,16 @@ async function viewDiff() {
 
 // ========== 自动更新功能 ==========
 
-let updateInfo = null;
 let updateDownloading = false;
+let updateListenersSetup = false;
 
-// 设置更新事件监听
+// 设置更新事件监听（确保只注册一次）
 function setupUpdateListeners() {
-    ipcRenderer.on('update-status', (event, data) => {
-        handleUpdateStatus(data);
-    });
+    if (updateListenersSetup) return;
+    updateListenersSetup = true;
     
-    ipcRenderer.on('update-progress', (event, progress) => {
-        handleUpdateProgress(progress);
-    });
+    ipcRenderer.on('update-status', handleUpdateStatus);
+    ipcRenderer.on('update-progress', handleUpdateProgress);
 }
 
 // 处理更新状态
@@ -1847,17 +1846,15 @@ function handleUpdateStatus(data) {
     
     switch (status) {
         case 'checking':
-            log('正在检查更新...', 'info');
+            // 主进程已发送状态，静默处理（不显示消息，避免干扰用户）
             break;
         case 'available':
-            updateInfo = { version, releaseNotes };
             showUpdateAvailableDialog(version, releaseNotes);
             break;
         case 'not-available':
             showMessage('已是最新版本', 'success');
             break;
         case 'error':
-            log(`更新检查失败: ${message}`, 'error');
             showMessage(`更新检查失败: ${message}`, 'error');
             break;
         case 'downloaded':
@@ -1866,14 +1863,22 @@ function handleUpdateStatus(data) {
     }
 }
 
-// 处理更新进度
+// 处理更新进度（检查进度弹窗是否存在，而非仅检查标志，避免进度事件丢失）
 function handleUpdateProgress(progress) {
-    if (updateDownloading) {
-        const percent = progress.percent || 0;
-        const transferred = formatBytes(progress.transferred || 0);
-        const total = formatBytes(progress.total || 0);
-        log(`下载更新中: ${percent}% (${transferred}/${total})`, 'info');
-    }
+    const progressBar = document.getElementById('update-progress-bar');
+    const progressText = document.getElementById('update-progress-text');
+    
+    // 如果进度弹窗不存在，忽略进度事件（可能用户关闭了弹窗或下载未开始）
+    if (!progressBar || !progressText) return;
+    
+    const percent = progress.percent || 0;
+    const transferred = formatBytes(progress.transferred || 0);
+    const total = formatBytes(progress.total || 0);
+    
+    // 更新进度条和文本（不记录日志，避免日志刷屏）
+    progressBar.style.width = `${percent}%`;
+    progressBar.style.transition = 'width 0.3s ease';
+    progressText.textContent = `${percent}% (${transferred}/${total})`;
 }
 
 // 格式化字节数
@@ -1885,84 +1890,231 @@ function formatBytes(bytes) {
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
 }
 
-// 显示更新可用对话框
-function showUpdateAvailableDialog(version, releaseNotes) {
-    const notes = releaseNotes ? `<div style="max-height: 200px; overflow-y: auto; margin-top: 10px; padding: 10px; background: var(--bg-tertiary); border-radius: 6px; font-size: 12px;">${releaseNotes}</div>` : '';
-    const content = `
-        <div class="form-group">
-            <p style="margin: 0; color: var(--text-primary);">发现新版本 <strong>v${version}</strong></p>
-            ${notes}
-            <p style="margin-top: 15px; color: var(--text-secondary); font-size: 12px;">是否现在下载并安装？</p>
-        </div>
-    `;
+// 渲染 Markdown 为 HTML
+function renderMarkdown(md) {
+    if (!md) return '';
     
-    showModal('发现新版本', content, async () => {
-        await downloadUpdate();
-    }, true);
+    let html = md
+        .replace(/^# (.+)$/gm, '<h3>$1</h3>')
+        .replace(/^## (.+)$/gm, '<h4>$1</h4>')
+        .replace(/^### (.+)$/gm, '<h5>$1</h5>')
+        .replace(/^\*\* (.+)$/gm, '<li>$1</li>')
+        .replace(/^- (.+)$/gm, '<li>$1</li>');
+    
+    const lines = html.split('\n');
+    const result = [];
+    let inList = false;
+    
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) {
+            if (inList) {
+                result.push('</ul>');
+                inList = false;
+            }
+            continue;
+        }
+        
+        if (line.startsWith('<li>')) {
+            if (!inList) {
+                result.push('<ul>');
+                inList = true;
+            }
+            result.push(line);
+        } else {
+            if (inList) {
+                result.push('</ul>');
+                inList = false;
+            }
+            if (line.startsWith('<h') || line.startsWith('<p')) {
+                result.push(line);
+            } else if (!line.match(/^<[hul]/)) {
+                result.push(`<p>${line}</p>`);
+            } else {
+                result.push(line);
+            }
+        }
+    }
+    
+    if (inList) {
+        result.push('</ul>');
+    }
+    
+    return result.join('\n');
 }
 
-// 显示更新下载完成对话框
-function showUpdateDownloadedDialog(version) {
+// 显示更新可用对话框：中间为 MD 更新说明，底部「安装」「取消」
+function showUpdateAvailableDialog(version, releaseNotes) {
+    const notesHtml = releaseNotes ? `
+        <div class="update-notes" style="
+            max-height: 320px; 
+            overflow-y: auto; 
+            margin: 15px 0; 
+            padding: 15px; 
+            background: var(--bg-tertiary); 
+            border-radius: 8px; 
+            border: 1px solid var(--border-color);
+            animation: fadeIn 0.3s ease;
+        ">
+            <div style="
+                font-size: 13px; 
+                line-height: 1.8; 
+                color: var(--text-secondary);
+            ">${renderMarkdown(releaseNotes)}</div>
+        </div>
+    ` : '';
+
     const content = `
-        <div class="form-group">
-            <p style="margin: 0; color: var(--text-primary);">更新 v${version} 已下载完成</p>
-            <p style="margin-top: 15px; color: var(--text-secondary); font-size: 12px;">将在应用重启后自动安装</p>
+        <div class="form-group" style="animation: slideDown 0.3s ease;">
+            <div style="
+                display: flex; 
+                align-items: center; 
+                gap: 10px; 
+                margin-bottom: 15px;
+                padding: 12px;
+                background: linear-gradient(135deg, var(--primary-color)15, var(--primary-color)30);
+                border-radius: 8px;
+            ">
+                <span style="font-size: 24px;">🎉</span>
+                <p style="margin: 0; color: var(--text-primary); font-size: 16px; font-weight: 600;">
+                    发现新版本 <strong style="color: var(--primary-color);">v${version}</strong>
+                </p>
+            </div>
+            ${notesHtml}
+            <p style="margin-top: 15px; color: var(--text-secondary); font-size: 13px; line-height: 1.6;">
+                点击「安装」将下载更新，下载完成后可立即重启应用或稍后关闭/重启时自动安装。
+            </p>
         </div>
     `;
-    
+
+    showModal('发现新版本', content, async () => {
+        closeModal();
+        // 先显示进度弹窗，等待DOM渲染完成后再开始下载，确保进度事件能正确更新UI
+        showUpdateProgressModal();
+        // 使用 setTimeout 确保进度弹窗DOM已完全渲染
+        await new Promise(resolve => setTimeout(resolve, 100));
+        await downloadUpdate();
+        return false; // 不在此处关闭弹窗，由下载完成或失败逻辑单独处理
+    }, true, { primaryLabel: '安装', cancelLabel: '取消' });
+}
+
+// 仅显示下载进度弹窗（无安装/取消，仅进度条）
+function showUpdateProgressModal() {
+    const progressContent = `
+        <div class="form-group" style="animation: slideDown 0.3s ease;">
+            <p style="margin: 0 0 12px 0; color: var(--text-primary); font-size: 14px; font-weight: 600;">
+                正在下载更新...
+            </p>
+            <div style="
+                width: 100%; 
+                height: 10px; 
+                background: var(--bg-tertiary); 
+                border-radius: 5px; 
+                overflow: hidden;
+                margin-bottom: 8px;
+            ">
+                <div id="update-progress-bar" style="
+                    height: 100%; 
+                    background: linear-gradient(90deg, var(--primary-color), var(--primary-color)dd);
+                    width: 0%;
+                    transition: width 0.3s ease;
+                    border-radius: 5px;
+                "></div>
+            </div>
+            <p id="update-progress-text" style="
+                margin: 0; 
+                color: var(--text-secondary); 
+                font-size: 12px; 
+                text-align: center;
+            ">0%</p>
+        </div>
+    `;
+    showModal('下载更新', progressContent, null, false);
+}
+
+// 显示更新下载完成对话框：立即重启 / 稍后（关闭或退出时自动安装）
+function showUpdateDownloadedDialog(version) {
+    // 关闭进度弹窗（如果存在）
+    const progressBar = document.getElementById('update-progress-bar');
+    if (progressBar) {
+        closeModal();
+    }
+    updateDownloading = false;
+
+    const content = `
+        <div class="form-group" style="animation: slideDown 0.3s ease;">
+            <div style="
+                display: flex; 
+                align-items: center; 
+                gap: 10px; 
+                margin-bottom: 15px;
+                padding: 12px;
+                background: linear-gradient(135deg, #4CAF5020, #4CAF5030);
+                border-radius: 8px;
+            ">
+                <span style="font-size: 24px;">✅</span>
+                <p style="margin: 0; color: var(--text-primary); font-size: 16px; font-weight: 600;">
+                    更新 <strong style="color: #4CAF50;">v${version}</strong> 已下载完成
+                </p>
+            </div>
+            <p style="margin-top: 15px; color: var(--text-secondary); font-size: 13px; line-height: 1.6;">
+                更新包已就绪。点击「立即重启」马上应用更新；选「稍后」则本次关闭或下次启动时会自动安装。
+            </p>
+        </div>
+    `;
+
     showModal('更新已就绪', content, async () => {
         await installUpdate();
-    }, true);
+    }, true, { primaryLabel: '立即重启', cancelLabel: '稍后' });
 }
 
-// 检查更新
+// 检查更新（主进程会自动发送状态事件，此处不重复显示消息）
 async function checkForUpdates() {
-    log('正在检查更新...', 'info');
-    showMessage('正在检查更新...', 'info');
-    
     try {
         const result = await ipcRenderer.invoke('check-for-updates');
         if (!result.success) {
             throw new Error(result.error || '检查更新失败');
         }
+        // 成功时主进程会发送状态事件，由 handleUpdateStatus 处理
     } catch (error) {
-        log(`检查更新失败: ${error.message}`, 'error');
+        // IPC 调用失败时才显示错误（主进程事件可能未触发）
         showMessage(`检查更新失败: ${error.message}`, 'error');
     }
 }
 
-// 下载更新
+// 下载更新（进度弹窗由调用方在点击「安装」时已打开）
 async function downloadUpdate() {
     if (updateDownloading) {
         showMessage('更新正在下载中...', 'info');
         return;
     }
-    
+
     updateDownloading = true;
-    log('开始下载更新...', 'info');
-    showMessage('开始下载更新...', 'info');
-    
+
     try {
         const result = await ipcRenderer.invoke('download-update');
         if (!result.success) {
             throw new Error(result.error || '下载更新失败');
         }
+        // 下载成功时，主进程会发送 'downloaded' 状态，由 handleUpdateStatus 处理
     } catch (error) {
         updateDownloading = false;
-        log(`下载更新失败: ${error.message}`, 'error');
+        // 检查进度弹窗是否存在再关闭（避免关闭不存在的弹窗）
+        const progressBar = document.getElementById('update-progress-bar');
+        if (progressBar) {
+            closeModal();
+        }
         showMessage(`下载更新失败: ${error.message}`, 'error');
     }
 }
 
+
 // 安装更新
 async function installUpdate() {
-    log('准备安装更新，应用将重启...', 'info');
-    showMessage('应用将重启以安装更新...', 'info');
-    
     try {
         await ipcRenderer.invoke('install-update');
+        // quitAndInstall 会立即退出应用，后续代码不会执行
     } catch (error) {
-        log(`安装更新失败: ${error.message}`, 'error');
         showMessage(`安装更新失败: ${error.message}`, 'error');
     }
 }

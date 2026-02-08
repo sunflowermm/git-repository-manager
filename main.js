@@ -426,7 +426,7 @@ function detectPlatform(url) {
     return 'GitHub';
   }
   if (urlLower.includes('gitee.com')) return 'Gitee';
-  if (urlLower.includes('gitcode.net')) return 'GitCode';
+  if (urlLower.includes('gitcode.net') || urlLower.includes('gitcode.com')) return 'GitCode';
   if (urlLower.includes('gitlab.com') || urlLower.includes('gitlab.io')) return 'GitLab';
   return '其他';
 }
@@ -511,8 +511,8 @@ ipcMain.handle('git-add', async (event, repoPath, files = []) => {
 ipcMain.handle('git-set-user', async (event, repoPath, username, email) => {
   try {
     const git = simpleGit(repoPath);
-    if (username) await git.addConfig('user.name', username);
-    if (email) await git.addConfig('user.email', email);
+    if (username) await git.addConfig('user.name', username, false);
+    if (email) await git.addConfig('user.email', email, false);
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
@@ -733,9 +733,9 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinateRepoPath, co
     const unt = status.untracked || [];
     const summary = (mod.length || unt.length) ? ` [${mod.length} 修改, ${unt.length} 新增]` : '';
 
-    if (mainConfig && mainConfig.username && mainConfig.email) {
-      await mainGit.addConfig('user.name', mainConfig.username);
-      await mainGit.addConfig('user.email', mainConfig.email);
+    if (mainConfig?.username && mainConfig?.email) {
+      await mainGit.addConfig('user.name', mainConfig.username, false);
+      await mainGit.addConfig('user.email', mainConfig.email, false);
     }
     await mainGit.commit(commitMessage + summary);
 
@@ -774,9 +774,14 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinateRepoPath, co
     }
 
     await subGit.add('.');
-    if (subConfig && subConfig.username && subConfig.email) {
-      await subGit.addConfig('user.name', subConfig.username);
-      await subGit.addConfig('user.email', subConfig.email);
+    if (subConfig?.username && subConfig?.email) {
+      await subGit.addConfig('user.name', subConfig.username, false);
+      await subGit.addConfig('user.email', subConfig.email, false);
+    } else if (mainConfig?.username && mainConfig?.email) {
+      await subGit.addConfig('user.name', mainConfig.username, false);
+      await subGit.addConfig('user.email', mainConfig.email, false);
+    } else {
+      throw new Error('请先配置平台的用户名和邮箱');
     }
     await subGit.commit(commitMessage + summary);
     if (subConfig) setupGitEnvironment(subConfig);

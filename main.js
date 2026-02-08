@@ -218,10 +218,11 @@ autoUpdater.on('error', (err) => {
 
 autoUpdater.on('download-progress', (progressObj) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
+    const percent = Math.max(0, Math.min(100, progressObj.percent || 0));
     mainWindow.webContents.send('update-progress', {
-      percent: Math.round(progressObj.percent),
-      transferred: progressObj.transferred,
-      total: progressObj.total
+      percent: Math.round(percent),
+      transferred: progressObj.transferred || 0,
+      total: progressObj.total || 0
     });
   }
 });

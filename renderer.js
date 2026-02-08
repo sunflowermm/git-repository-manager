@@ -290,7 +290,6 @@ function stopAutoRefresh() {
     }
 }
 
-// 渲染仓库列表（性能优化：使用DocumentFragment）
 function renderRepoList() {
     if (!elements.repoList) return;
     
@@ -310,17 +309,15 @@ function renderRepoList() {
     );
     const isFiltered = searchTerm.length > 0;
     
-    // 使用DocumentFragment优化性能
     const fragment = document.createDocumentFragment();
     
-    filteredRepos.forEach((repo, filteredIndex) => {
+    filteredRepos.forEach((repo) => {
         const li = document.createElement('li');
         li.className = 'repo-item';
         if (state.currentRepo && state.currentRepo.path === repo.path) {
             li.classList.add('active');
         }
         
-        // 获取在 state.repos 中的实际索引（用于拖拽排序）
         const actualIndex = state.repos.findIndex(r => r.path === repo.path);
         
         const changes = repo.modified + repo.staged + repo.untracked;
@@ -329,17 +326,15 @@ function renderRepoList() {
         
         const branchText = repo.branch || '无分支';
         
-        // 拖拽手柄（仅在未搜索时显示）
+        let dragHandle = null;
         if (!isFiltered) {
-            const dragHandle = document.createElement('div');
+            dragHandle = document.createElement('div');
             dragHandle.className = 'repo-drag-handle';
             dragHandle.title = '拖动调整顺序';
-            dragHandle.innerHTML = '⋮⋮';
-            dragHandle.setAttribute('draggable', 'true');
-            li.appendChild(dragHandle);
+            dragHandle.textContent = '⋮⋮';
+            li.insertBefore(dragHandle, li.firstChild);
         }
         
-        // 使用 DOM API 创建元素，避免 XSS
         const body = document.createElement('div');
         body.className = 'repo-item-body';
         
@@ -388,9 +383,7 @@ function renderRepoList() {
         li.dataset.repoName = repo.name;
         li.dataset.repoIndex = actualIndex;
         
-        // 拖拽事件（仅在未搜索时启用）
-        if (!isFiltered && actualIndex >= 0) {
-            const dragHandle = li.querySelector('.repo-drag-handle');
+        if (!isFiltered && actualIndex >= 0 && dragHandle) {
             setupDragAndDrop(li, dragHandle, actualIndex);
         }
         
@@ -419,53 +412,50 @@ function renderRepoList() {
     elements.repoList.appendChild(fragment);
 }
 
-// 拖拽排序功能
-let draggedElement = null;
-let draggedIndex = -1;
-
 function setupDragAndDrop(li, dragHandle, index) {
-    dragHandle.addEventListener('dragstart', (e) => {
-        draggedElement = li;
-        draggedIndex = index;
-        li.classList.add('dragging');
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', li.dataset.repoPath || '');
-    });
-
-    dragHandle.addEventListener('dragend', () => {
-        li.classList.remove('dragging');
-        elements.repoList?.querySelectorAll('.repo-item').forEach(item => item.classList.remove('drag-over'));
-        draggedElement = null;
-        draggedIndex = -1;
-    });
-
-    li.addEventListener('dragover', (e) => {
-        if (draggedElement && draggedElement !== li) {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = 'move';
-            li.classList.add('drag-over');
-        }
-    });
-
-    li.addEventListener('dragleave', () => li.classList.remove('drag-over'));
-
-    li.addEventListener('drop', (e) => {
+    dragHandle.addEventListener('mousedown', (e) => {
         e.preventDefault();
-        li.classList.remove('drag-over');
-        if (!draggedElement || draggedElement === li) return;
-        const toIndex = parseInt(li.dataset.repoIndex, 10);
-        if (draggedIndex >= 0 && toIndex >= 0 && draggedIndex !== toIndex) {
-            reorderRepos(draggedIndex, toIndex);
-        }
+        li.classList.add('dragging');
+
+        const onMove = (ev) => {
+            const hoverLi = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.repo-item');
+            elements.repoList?.querySelectorAll('.repo-item').forEach(item => {
+                item.classList.toggle('drag-over', item === hoverLi && item !== li);
+            });
+        };
+
+        const onUp = (ev) => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            const dropLi = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.repo-item');
+            li.classList.remove('dragging');
+            elements.repoList?.querySelectorAll('.repo-item').forEach(item => item.classList.remove('drag-over'));
+            if (dropLi && dropLi !== li) {
+                const toIndex = parseInt(dropLi.dataset.repoIndex, 10);
+                if (index >= 0 && toIndex >= 0 && index !== toIndex) {
+                    reorderRepos(index, toIndex);
+                }
+            }
+        };
+
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp, { once: true });
     });
 }
 
-// 重新排序仓库（顺序通过 saveConfig 写入 repo_paths，启动时 loadConfig 按此顺序加载）
 async function reorderRepos(fromIndex, toIndex) {
-    const newRepoPaths = [...state.repoPaths];
-    const [moved] = newRepoPaths.splice(fromIndex, 1);
-    newRepoPaths.splice(toIndex, 0, moved);
-    state.repoPaths = newRepoPaths;
+    const fromPath = state.repos[fromIndex]?.path;
+    const toPath = state.repos[toIndex]?.path;
+    if (!fromPath || !toPath || fromPath === toPath) return;
+
+    const paths = [...state.repoPaths];
+    const fromIdx = paths.indexOf(fromPath);
+    const toIdx = paths.indexOf(toPath);
+    if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return;
+
+    const [moved] = paths.splice(fromIdx, 1);
+    paths.splice(toIdx, 0, moved);
+    state.repoPaths = paths;
     await saveConfig();
     await refreshRepoList(true);
     log('仓库顺序已调整', 'info');
@@ -477,7 +467,6 @@ function filterRepos() {
     filterTimer = setTimeout(renderRepoList, 0);
 }
 
-// 更新仓库状态信息（辅助函数）
 function updateRepoStatus(repoPath, repoInfo) {
     const updatedRepo = state.repos.find(r => r.path === repoPath);
     if (updatedRepo && repoInfo?.status) {
@@ -1951,16 +1940,46 @@ function handleUpdateStatus(data) {
 }
 
 let _lastLoggedProgressPct = -1;
+let _progressUpdateTimer = null;
+
 function handleUpdateProgress(progress) {
-    const bar = document.getElementById('update-progress-bar');
-    const text = document.getElementById('update-progress-text');
-    if (!bar || !text) return;
-    const pct = progress.percent || 0;
+    // 确保进度模态框已显示
+    let bar = document.getElementById('update-progress-bar');
+    let text = document.getElementById('update-progress-text');
+    if (!bar || !text) {
+        // 如果模态框未显示，尝试显示它（可能进度事件在模态框显示前到达）
+        if (!document.getElementById('update-progress-bar')) {
+            showUpdateProgressModal();
+            bar = document.getElementById('update-progress-bar');
+            text = document.getElementById('update-progress-text');
+        }
+        if (!bar || !text) return;
+    }
+
+    const pct = Math.max(0, Math.min(100, progress.percent || 0));
+    const transferred = progress.transferred || 0;
+    const total = progress.total || 0;
+
     bar.style.width = `${pct}%`;
-    text.textContent = `${pct}% (${formatBytes(progress.transferred || 0)}/${formatBytes(progress.total || 0)})`;
+    if (total > 0) {
+        text.textContent = `${pct}% (${formatBytes(transferred)}/${formatBytes(total)})`;
+    } else {
+        text.textContent = `${pct}%`;
+    }
+
+    // 清除超时定时器（收到进度更新）
+    if (_progressUpdateTimer) {
+        clearTimeout(_progressUpdateTimer);
+        _progressUpdateTimer = null;
+    }
+
+    // 记录关键进度点
     if (pct >= 100 && _lastLoggedProgressPct < 100) {
         _lastLoggedProgressPct = 100;
         log('更新: 下载进度 100%', 'info');
+    } else if (pct > 0 && _lastLoggedProgressPct === -1) {
+        log(`更新: 下载进度开始更新 (${pct}%)`, 'info');
+        _lastLoggedProgressPct = 0;
     }
 }
 
@@ -2051,19 +2070,34 @@ function showUpdateAvailableDialog(version, releaseNotes) {
 }
 
 function showUpdateProgressModal() {
+    // 如果已显示，不重复显示
+    if (document.getElementById('update-progress-bar')) return;
+    
     const html = `
         <div class="form-group">
             <p class="update-progress-wrap__label">正在下载更新...</p>
             <div class="update-progress-track">
                 <div id="update-progress-bar" class="update-progress-bar"></div>
             </div>
-            <p id="update-progress-text" class="update-progress-text">0%</p>
+            <p id="update-progress-text" class="update-progress-text">准备中...</p>
         </div>
     `;
     showModal('下载更新', html, null, false);
+    
+    // 重置进度状态
+    _lastLoggedProgressPct = -1;
+    const bar = document.getElementById('update-progress-bar');
+    const text = document.getElementById('update-progress-text');
+    if (bar) bar.style.width = '0%';
+    if (text) text.textContent = '准备中...';
 }
 
 function showUpdateDownloadedDialog(version) {
+    // 清除进度更新超时定时器
+    if (_progressUpdateTimer) {
+        clearTimeout(_progressUpdateTimer);
+        _progressUpdateTimer = null;
+    }
     if (document.getElementById('update-progress-bar')) closeModal();
     updateDownloading = false;
     const content = `
@@ -2129,11 +2163,30 @@ async function downloadUpdate() {
     updateDownloading = true;
     _lastLoggedProgressPct = -1;
     log('更新: 开始下载', 'info');
+    
+    // 设置超时：如果30秒内没有收到任何进度更新，提示用户
+    _progressUpdateTimer = setTimeout(() => {
+        const bar = document.getElementById('update-progress-bar');
+        const text = document.getElementById('update-progress-text');
+        if (bar && text && text.textContent === '准备中...') {
+            text.textContent = '正在连接服务器...';
+            log('更新: 下载可能较慢，请稍候', 'info');
+        }
+    }, 3000);
+    
     try {
+        // 注意：download-update 返回 success 不代表下载完成，下载完成由 update-downloaded 事件通知
         const result = await ipcRenderer.invoke('download-update');
-        if (!result.success) throw new Error(result.error || '下载更新失败');
+        if (!result.success) {
+            throw new Error(result.error || '下载更新失败');
+        }
+        // 下载请求已发起，等待 download-progress 和 update-downloaded 事件
     } catch (e) {
         updateDownloading = false;
+        if (_progressUpdateTimer) {
+            clearTimeout(_progressUpdateTimer);
+            _progressUpdateTimer = null;
+        }
         if (document.getElementById('update-progress-bar')) closeModal();
         const msg = e.message || '下载更新失败';
         log(msg, 'error');

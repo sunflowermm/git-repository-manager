@@ -492,58 +492,78 @@ select {
 
 .repo-drag-handle {
     flex-shrink: 0;
-    padding: 4px 6px;
+    padding: 6px 4px;
     margin-right: 4px;
-    font-size: 12px;
+    font-size: 14px;
     line-height: 1;
     color: var(--text-secondary);
     cursor: grab;
     user-select: none;
-    opacity: 0.5;
-    transition: opacity var(--transition-normal), color var(--transition-normal);
+    opacity: 0.4;
+    transition: opacity var(--transition-normal), color var(--transition-normal), transform var(--transition-fast);
     -webkit-app-region: no-drag;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    border-radius: 4px;
+    touch-action: none;
+}
+
+.repo-drag-handle:hover {
+    opacity: 0.9;
+    color: var(--primary);
+    background: rgba(13, 148, 136, 0.1);
+    transform: scale(1.1);
+}
+
+[data-theme="dark"] .repo-drag-handle:hover {
+    background: rgba(20, 184, 166, 0.15);
 }
 
 .repo-drag-handle:active {
     cursor: grabbing;
+    opacity: 1;
+    transform: scale(1.05);
 }
 
-.repo-item:hover .repo-drag-handle {
-    opacity: 0.8;
+.repo-item:not(.active):hover .repo-drag-handle {
+    opacity: 0.7;
     color: var(--text-primary);
 }
 
 .repo-item.active .repo-drag-handle {
     color: rgba(255, 255, 255, 0.7);
-    opacity: 0.8;
+    opacity: 0.85;
 }
 
-.repo-item.active:hover .repo-drag-handle {
-    color: rgba(255, 255, 255, 0.9);
+.repo-item.active .repo-drag-handle:hover {
+    background: rgba(255, 255, 255, 0.2);
     opacity: 1;
 }
 
-/* 正在拖动的项：略微上浮、半透明、阴影加强 */
+/* 拖拽中 */
 .repo-item.dragging {
-    opacity: 0.65;
-    transform: scale(1.02);
-    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18), 0 0 0 1px var(--primary);
+    opacity: 0.5;
+    transform: scale(0.98);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25), 0 0 0 2px var(--primary);
     border-color: var(--primary);
-    z-index: 10;
+    z-index: 1000;
     pointer-events: none;
+    cursor: grabbing !important;
 }
 
 .repo-item.dragging .repo-drag-handle {
     cursor: grabbing;
 }
 
-/* 拖拽悬停时的插入位置：虚线框 + 左侧高亮 + 轻微下压/展开 */
+/* 拖拽悬停时的放置目标 */
 .repo-item.drag-over {
     border-color: var(--primary);
     border-style: dashed;
     border-width: 2px;
-    background: var(--bg-secondary);
-    box-shadow: inset 0 0 0 1px rgba(13, 148, 136, 0.15);
+    background: rgba(13, 148, 136, 0.08);
+    box-shadow: inset 0 0 0 1px rgba(13, 148, 136, 0.2);
     transform: scale(1.01);
 }
 
@@ -564,15 +584,16 @@ select {
     50% { opacity: 1; }
 }
 
-/* 当前选中项作为放置目标时，仍显示放置反馈 */
 .repo-item.active.drag-over {
-    transform: scale(1.01);
-    border-style: dashed;
-    background: rgba(13, 148, 136, 0.12);
+    background: rgba(13, 148, 136, 0.35);
+}
+
+[data-theme="dark"] .repo-item.drag-over {
+    background: rgba(20, 184, 166, 0.1);
 }
 
 [data-theme="dark"] .repo-item.active.drag-over {
-    background: rgba(20, 184, 166, 0.15);
+    background: rgba(20, 184, 166, 0.4);
 }
 
 .repo-remove-btn {
@@ -607,17 +628,23 @@ select {
     transition: transform var(--transition-normal) ease;
 }
 
-.repo-item:hover {
+/* 未选中项 hover：轻微右移 + 边框高亮 */
+.repo-item:not(.active):not(.dragging):hover {
     background: var(--bg-secondary);
     border-color: var(--primary);
     transform: translateX(4px);
     box-shadow: 0 4px 12px var(--shadow);
 }
 
-.repo-item:hover::before {
+[data-theme="light"] .repo-item:not(.active):not(.dragging):hover {
+    background: #eef2f6;
+}
+
+.repo-item:not(.active):hover::before {
     transform: scaleY(1);
 }
 
+/* 选中项：始终保持主题色背景，hover 不覆盖 */
 .repo-item.active {
     background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
     color: #fff;
@@ -627,11 +654,13 @@ select {
     transform: translateX(2px);
 }
 
-[data-theme="dark"] .repo-item.active {
-    box-shadow: 0 4px 20px rgba(20, 184, 166, 0.4);
+.repo-item.active:hover {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+    box-shadow: 0 4px 20px rgba(13, 148, 136, 0.4);
 }
 
-[data-theme="dark"] .repo-item.active {
+[data-theme="dark"] .repo-item.active,
+[data-theme="dark"] .repo-item.active:hover {
     box-shadow: 0 4px 20px rgba(20, 184, 166, 0.4);
 }
 

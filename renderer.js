@@ -1826,32 +1826,30 @@ async function viewDiff() {
     }
 }
 
-// ========== 自动更新功能 ==========
+// ========== 自动更新 ==========
 
 let updateDownloading = false;
 let updateListenersSetup = false;
 
-// 设置更新事件监听（确保只注册一次）
 function setupUpdateListeners() {
     if (updateListenersSetup) return;
     updateListenersSetup = true;
-    
     ipcRenderer.on('update-status', handleUpdateStatus);
     ipcRenderer.on('update-progress', handleUpdateProgress);
 }
 
-// 处理更新状态
 function handleUpdateStatus(data) {
     const { status, message, version, releaseNotes } = data;
-    
     switch (status) {
         case 'checking':
-            // 主进程已发送状态，静默处理（不显示消息，避免干扰用户）
+            log('正在检查更新...', 'info');
             break;
         case 'available':
+            log(`检查完成：发现新版本 v${version}`, 'info');
             showUpdateAvailableDialog(version, releaseNotes);
             break;
         case 'not-available':
+            log('检查完成：已是最新版本', 'info');
             showMessage('已是最新版本', 'success');
             break;
         case 'error':
@@ -1863,22 +1861,13 @@ function handleUpdateStatus(data) {
     }
 }
 
-// 处理更新进度（检查进度弹窗是否存在，而非仅检查标志，避免进度事件丢失）
 function handleUpdateProgress(progress) {
-    const progressBar = document.getElementById('update-progress-bar');
-    const progressText = document.getElementById('update-progress-text');
-    
-    // 如果进度弹窗不存在，忽略进度事件（可能用户关闭了弹窗或下载未开始）
-    if (!progressBar || !progressText) return;
-    
-    const percent = progress.percent || 0;
-    const transferred = formatBytes(progress.transferred || 0);
-    const total = formatBytes(progress.total || 0);
-    
-    // 更新进度条和文本（不记录日志，避免日志刷屏）
-    progressBar.style.width = `${percent}%`;
-    progressBar.style.transition = 'width 0.3s ease';
-    progressText.textContent = `${percent}% (${transferred}/${total})`;
+    const bar = document.getElementById('update-progress-bar');
+    const text = document.getElementById('update-progress-text');
+    if (!bar || !text) return;
+    const pct = progress.percent || 0;
+    bar.style.width = `${pct}%`;
+    text.textContent = `${pct}% (${formatBytes(progress.transferred || 0)}/${formatBytes(progress.total || 0)})`;
 }
 
 // 格式化字节数
@@ -1943,178 +1932,93 @@ function renderMarkdown(md) {
     return result.join('\n');
 }
 
-// 显示更新可用对话框：中间为 MD 更新说明，底部「安装」「取消」
 function showUpdateAvailableDialog(version, releaseNotes) {
     const notesHtml = releaseNotes ? `
-        <div class="update-notes" style="
-            max-height: 320px; 
-            overflow-y: auto; 
-            margin: 15px 0; 
-            padding: 15px; 
-            background: var(--bg-tertiary); 
-            border-radius: 8px; 
-            border: 1px solid var(--border-color);
-            animation: fadeIn 0.3s ease;
-        ">
-            <div style="
-                font-size: 13px; 
-                line-height: 1.8; 
-                color: var(--text-secondary);
-            ">${renderMarkdown(releaseNotes)}</div>
+        <div class="update-notes-wrap">
+            <div class="update-notes">${renderMarkdown(releaseNotes)}</div>
         </div>
     ` : '';
-
     const content = `
-        <div class="form-group" style="animation: slideDown 0.3s ease;">
-            <div style="
-                display: flex; 
-                align-items: center; 
-                gap: 10px; 
-                margin-bottom: 15px;
-                padding: 12px;
-                background: linear-gradient(135deg, var(--primary-color)15, var(--primary-color)30);
-                border-radius: 8px;
-            ">
-                <span style="font-size: 24px;">🎉</span>
-                <p style="margin: 0; color: var(--text-primary); font-size: 16px; font-weight: 600;">
-                    发现新版本 <strong style="color: var(--primary-color);">v${version}</strong>
-                </p>
+        <div class="form-group">
+            <div class="update-banner">
+                <span class="update-banner__icon">🎉</span>
+                <p class="update-banner__text">发现新版本 <strong class="update-banner__version">v${version}</strong></p>
             </div>
             ${notesHtml}
-            <p style="margin-top: 15px; color: var(--text-secondary); font-size: 13px; line-height: 1.6;">
-                点击「安装」将下载更新，下载完成后可立即重启应用或稍后关闭/重启时自动安装。
-            </p>
+            <p class="update-dialog-desc">点击「安装」下载更新，完成后可立即重启或稍后关闭时自动安装。</p>
         </div>
     `;
-
     showModal('发现新版本', content, async () => {
         closeModal();
-        // 先显示进度弹窗，等待DOM渲染完成后再开始下载，确保进度事件能正确更新UI
         showUpdateProgressModal();
-        // 使用 setTimeout 确保进度弹窗DOM已完全渲染
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise(r => { requestAnimationFrame(() => requestAnimationFrame(r)); });
         await downloadUpdate();
-        return false; // 不在此处关闭弹窗，由下载完成或失败逻辑单独处理
+        return false;
     }, true, { primaryLabel: '安装', cancelLabel: '取消' });
 }
 
-// 仅显示下载进度弹窗（无安装/取消，仅进度条）
 function showUpdateProgressModal() {
-    const progressContent = `
-        <div class="form-group" style="animation: slideDown 0.3s ease;">
-            <p style="margin: 0 0 12px 0; color: var(--text-primary); font-size: 14px; font-weight: 600;">
-                正在下载更新...
-            </p>
-            <div style="
-                width: 100%; 
-                height: 10px; 
-                background: var(--bg-tertiary); 
-                border-radius: 5px; 
-                overflow: hidden;
-                margin-bottom: 8px;
-            ">
-                <div id="update-progress-bar" style="
-                    height: 100%; 
-                    background: linear-gradient(90deg, var(--primary-color), var(--primary-color)dd);
-                    width: 0%;
-                    transition: width 0.3s ease;
-                    border-radius: 5px;
-                "></div>
+    const html = `
+        <div class="form-group">
+            <p class="update-progress-wrap__label">正在下载更新...</p>
+            <div class="update-progress-track">
+                <div id="update-progress-bar" class="update-progress-bar"></div>
             </div>
-            <p id="update-progress-text" style="
-                margin: 0; 
-                color: var(--text-secondary); 
-                font-size: 12px; 
-                text-align: center;
-            ">0%</p>
+            <p id="update-progress-text" class="update-progress-text">0%</p>
         </div>
     `;
-    showModal('下载更新', progressContent, null, false);
+    showModal('下载更新', html, null, false);
 }
 
-// 显示更新下载完成对话框：立即重启 / 稍后（关闭或退出时自动安装）
 function showUpdateDownloadedDialog(version) {
-    // 关闭进度弹窗（如果存在）
-    const progressBar = document.getElementById('update-progress-bar');
-    if (progressBar) {
-        closeModal();
-    }
+    if (document.getElementById('update-progress-bar')) closeModal();
     updateDownloading = false;
-
     const content = `
-        <div class="form-group" style="animation: slideDown 0.3s ease;">
-            <div style="
-                display: flex; 
-                align-items: center; 
-                gap: 10px; 
-                margin-bottom: 15px;
-                padding: 12px;
-                background: linear-gradient(135deg, #4CAF5020, #4CAF5030);
-                border-radius: 8px;
-            ">
-                <span style="font-size: 24px;">✅</span>
-                <p style="margin: 0; color: var(--text-primary); font-size: 16px; font-weight: 600;">
-                    更新 <strong style="color: #4CAF50;">v${version}</strong> 已下载完成
-                </p>
+        <div class="form-group">
+            <div class="update-banner update-banner--success">
+                <span class="update-banner__icon">✅</span>
+                <p class="update-banner__text">更新 <strong class="update-banner__version">v${version}</strong> 已下载完成</p>
             </div>
-            <p style="margin-top: 15px; color: var(--text-secondary); font-size: 13px; line-height: 1.6;">
-                更新包已就绪。点击「立即重启」马上应用更新；选「稍后」则本次关闭或下次启动时会自动安装。
-            </p>
+            <p class="update-dialog-desc">点击「立即重启」应用更新，或选「稍后」在关闭/下次启动时自动安装。</p>
         </div>
     `;
-
-    showModal('更新已就绪', content, async () => {
-        await installUpdate();
-    }, true, { primaryLabel: '立即重启', cancelLabel: '稍后' });
+    showModal('更新已就绪', content, () => installUpdate(), true, { primaryLabel: '立即重启', cancelLabel: '稍后' });
 }
 
-// 检查更新（主进程会自动发送状态事件，此处不重复显示消息）
 async function checkForUpdates() {
     try {
         const result = await ipcRenderer.invoke('check-for-updates');
-        if (!result.success) {
-            throw new Error(result.error || '检查更新失败');
+        if (result.skipped) {
+            log('当前为未打包环境，已跳过更新检查', 'info');
+            showMessage('当前为未打包环境，已跳过更新检查', 'info');
+            return;
         }
-        // 成功时主进程会发送状态事件，由 handleUpdateStatus 处理
-    } catch (error) {
-        // IPC 调用失败时才显示错误（主进程事件可能未触发）
-        showMessage(`检查更新失败: ${error.message}`, 'error');
+        if (!result.success) throw new Error(result.error || '检查更新失败');
+    } catch (e) {
+        showMessage(`检查更新失败: ${e.message}`, 'error');
     }
 }
 
-// 下载更新（进度弹窗由调用方在点击「安装」时已打开）
 async function downloadUpdate() {
     if (updateDownloading) {
         showMessage('更新正在下载中...', 'info');
         return;
     }
-
     updateDownloading = true;
-
     try {
         const result = await ipcRenderer.invoke('download-update');
-        if (!result.success) {
-            throw new Error(result.error || '下载更新失败');
-        }
-        // 下载成功时，主进程会发送 'downloaded' 状态，由 handleUpdateStatus 处理
-    } catch (error) {
+        if (!result.success) throw new Error(result.error || '下载更新失败');
+    } catch (e) {
         updateDownloading = false;
-        // 检查进度弹窗是否存在再关闭（避免关闭不存在的弹窗）
-        const progressBar = document.getElementById('update-progress-bar');
-        if (progressBar) {
-            closeModal();
-        }
-        showMessage(`下载更新失败: ${error.message}`, 'error');
+        if (document.getElementById('update-progress-bar')) closeModal();
+        showMessage(`下载更新失败: ${e.message}`, 'error');
     }
 }
 
-
-// 安装更新
 async function installUpdate() {
     try {
         await ipcRenderer.invoke('install-update');
-        // quitAndInstall 会立即退出应用，后续代码不会执行
-    } catch (error) {
-        showMessage(`安装更新失败: ${error.message}`, 'error');
+    } catch (e) {
+        showMessage(`安装更新失败: ${e.message}`, 'error');
     }
 }

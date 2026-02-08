@@ -114,13 +114,42 @@ function createWindow() {
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
 
-// 检查更新
+const GH_PROXY_HOST = 'gh-proxy.com';
+
+function applyGhProxy(https) {
+  const orig = https.request;
+  https.request = function (options, callback) {
+    const host = options.hostname || '';
+    if (host.includes('github.com') || host.includes('githubusercontent.com')) {
+      const fullUrl = 'https://' + host + (options.path || '');
+      options.hostname = GH_PROXY_HOST;
+      options.path = '/' + fullUrl;
+    }
+    return orig.call(this, options, callback);
+  };
+  return orig;
+}
+
+function removeGhProxy(https, orig) {
+  if (https && orig) https.request = orig;
+}
+
+async function runWithProxyFallback(fn) {
+  const https = require('https');
+  const orig = applyGhProxy(https);
+  try {
+    return await fn();
+  } catch (e1) {
+    removeGhProxy(https, orig);
+    return await fn();
+  } finally {
+    removeGhProxy(https, orig);
+  }
+}
+
 function checkForUpdates() {
-  if (process.env.NODE_ENV === 'development') return;
-  
-  autoUpdater.checkForUpdates().catch(() => {
-    // 静默处理错误
-  });
+  if (!app.isPackaged || process.env.NODE_ENV === 'development') return;
+  runWithProxyFallback(() => autoUpdater.checkForUpdates()).catch(() => {});
 }
 
 // 更新事件处理
@@ -193,33 +222,22 @@ app.on('activate', () => {
 
 // ========== IPC 处理程序 ==========
 
-// 更新相关IPC
 ipcMain.handle('check-for-updates', async () => {
+  if (!app.isPackaged) return { success: true, skipped: true, reason: 'unpacked' };
   try {
-    await autoUpdater.checkForUpdates();
+    await runWithProxyFallback(() => autoUpdater.checkForUpdates());
     return { success: true };
-  } catch (error) {
-    return { success: false, error: error.message };
+  } catch (e) {
+    return { success: false, error: e.message };
   }
 });
 
 ipcMain.handle('download-update', async () => {
   try {
-    const https = require('https');
-    const originalRequest = https.request;
-    https.request = function(options, callback) {
-      if (options.hostname && (options.hostname.includes('github.com') || options.hostname.includes('githubusercontent.com'))) {
-        const fullUrl = `https://${options.hostname}${options.path || ''}`;
-        options.hostname = 'gh-proxy.com';
-        options.path = '/' + fullUrl;
-      }
-      return originalRequest.call(this, options, callback);
-    };
-    await autoUpdater.downloadUpdate();
-    https.request = originalRequest;
+    await runWithProxyFallback(() => autoUpdater.downloadUpdate());
     return { success: true };
-  } catch (error) {
-    return { success: false, error: error.message };
+  } catch (e) {
+    return { success: false, error: e.message };
   }
 });
 

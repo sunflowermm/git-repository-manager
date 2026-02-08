@@ -308,22 +308,36 @@ function renderRepoList() {
     const filteredRepos = state.repos.filter(repo => 
         repo.name.toLowerCase().includes(searchTerm)
     );
+    const isFiltered = searchTerm.length > 0;
     
     // 使用DocumentFragment优化性能
     const fragment = document.createDocumentFragment();
     
-    filteredRepos.forEach(repo => {
+    filteredRepos.forEach((repo, filteredIndex) => {
         const li = document.createElement('li');
         li.className = 'repo-item';
         if (state.currentRepo && state.currentRepo.path === repo.path) {
             li.classList.add('active');
         }
         
+        // 获取在 state.repos 中的实际索引（用于拖拽排序）
+        const actualIndex = state.repos.findIndex(r => r.path === repo.path);
+        
         const changes = repo.modified + repo.staged + repo.untracked;
         const hasChanges = changes > 0;
         const role = getRepoRole(repo.name);
         
         const branchText = repo.branch || '无分支';
+        
+        // 拖拽手柄（仅在未搜索时显示）
+        if (!isFiltered) {
+            const dragHandle = document.createElement('div');
+            dragHandle.className = 'repo-drag-handle';
+            dragHandle.title = '拖动调整顺序';
+            dragHandle.innerHTML = '⋮⋮';
+            dragHandle.setAttribute('draggable', 'true');
+            li.appendChild(dragHandle);
+        }
         
         // 使用 DOM API 创建元素，避免 XSS
         const body = document.createElement('div');
@@ -372,17 +386,24 @@ function renderRepoList() {
         
         li.dataset.repoPath = repo.path;
         li.dataset.repoName = repo.name;
+        li.dataset.repoIndex = actualIndex;
+        
+        // 拖拽事件（仅在未搜索时启用）
+        if (!isFiltered && actualIndex >= 0) {
+            const dragHandle = li.querySelector('.repo-drag-handle');
+            setupDragAndDrop(li, dragHandle, actualIndex);
+        }
         
         li.addEventListener('click', (e) => {
             e.stopPropagation();
-            if (!e.target.closest('.repo-remove-btn')) {
+            if (!e.target.closest('.repo-remove-btn') && !e.target.closest('.repo-drag-handle')) {
                 selectRepo(repo);
             }
         });
         
         li.addEventListener('dblclick', (e) => {
             e.stopPropagation();
-            if (!e.target.closest('.repo-remove-btn')) {
+            if (!e.target.closest('.repo-remove-btn') && !e.target.closest('.repo-drag-handle')) {
                 openRepoFolder(repo.path);
             }
         });
@@ -396,6 +417,58 @@ function renderRepoList() {
     });
     
     elements.repoList.appendChild(fragment);
+}
+
+// 拖拽排序功能
+let draggedElement = null;
+let draggedIndex = -1;
+
+function setupDragAndDrop(li, dragHandle, index) {
+    dragHandle.addEventListener('dragstart', (e) => {
+        draggedElement = li;
+        draggedIndex = index;
+        li.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', li.dataset.repoPath || '');
+    });
+
+    dragHandle.addEventListener('dragend', () => {
+        li.classList.remove('dragging');
+        elements.repoList?.querySelectorAll('.repo-item').forEach(item => item.classList.remove('drag-over'));
+        draggedElement = null;
+        draggedIndex = -1;
+    });
+
+    li.addEventListener('dragover', (e) => {
+        if (draggedElement && draggedElement !== li) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            li.classList.add('drag-over');
+        }
+    });
+
+    li.addEventListener('dragleave', () => li.classList.remove('drag-over'));
+
+    li.addEventListener('drop', (e) => {
+        e.preventDefault();
+        li.classList.remove('drag-over');
+        if (!draggedElement || draggedElement === li) return;
+        const toIndex = parseInt(li.dataset.repoIndex, 10);
+        if (draggedIndex >= 0 && toIndex >= 0 && draggedIndex !== toIndex) {
+            reorderRepos(draggedIndex, toIndex);
+        }
+    });
+}
+
+// 重新排序仓库（顺序通过 saveConfig 写入 repo_paths，启动时 loadConfig 按此顺序加载）
+async function reorderRepos(fromIndex, toIndex) {
+    const newRepoPaths = [...state.repoPaths];
+    const [moved] = newRepoPaths.splice(fromIndex, 1);
+    newRepoPaths.splice(toIndex, 0, moved);
+    state.repoPaths = newRepoPaths;
+    await saveConfig();
+    await refreshRepoList(true);
+    log('仓库顺序已调整', 'info');
 }
 
 let filterTimer = null;

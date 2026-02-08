@@ -469,9 +469,6 @@ select {
     background: var(--bg-tertiary);
     border-radius: 8px;
     cursor: pointer;
-    transition: all var(--transition-normal) cubic-bezier(0.4, 0, 0.2, 1),
-                background var(--transition-theme) cubic-bezier(0.4, 0, 0.2, 1),
-                border-color var(--transition-theme) cubic-bezier(0.4, 0, 0.2, 1);
     border: 1px solid var(--border-color);
     position: relative;
     overflow: hidden;
@@ -479,13 +476,103 @@ select {
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    will-change: transform, background-color, border-color;
     -webkit-app-region: no-drag;
+    transition: transform var(--transition-normal) cubic-bezier(0.25, 0.46, 0.45, 0.94),
+                opacity var(--transition-normal) ease,
+                box-shadow var(--transition-normal) cubic-bezier(0.25, 0.46, 0.45, 0.94),
+                background var(--transition-theme) cubic-bezier(0.4, 0, 0.2, 1),
+                border-color var(--transition-theme) cubic-bezier(0.4, 0, 0.2, 1),
+                border-style 0.15s ease;
 }
 
 .repo-item-body {
     flex: 1;
     min-width: 0;
+}
+
+.repo-drag-handle {
+    flex-shrink: 0;
+    padding: 4px 6px;
+    margin-right: 4px;
+    font-size: 12px;
+    line-height: 1;
+    color: var(--text-secondary);
+    cursor: grab;
+    user-select: none;
+    opacity: 0.5;
+    transition: opacity var(--transition-normal), color var(--transition-normal);
+    -webkit-app-region: no-drag;
+}
+
+.repo-drag-handle:active {
+    cursor: grabbing;
+}
+
+.repo-item:hover .repo-drag-handle {
+    opacity: 0.8;
+    color: var(--text-primary);
+}
+
+.repo-item.active .repo-drag-handle {
+    color: rgba(255, 255, 255, 0.7);
+    opacity: 0.8;
+}
+
+.repo-item.active:hover .repo-drag-handle {
+    color: rgba(255, 255, 255, 0.9);
+    opacity: 1;
+}
+
+/* 正在拖动的项：略微上浮、半透明、阴影加强 */
+.repo-item.dragging {
+    opacity: 0.65;
+    transform: scale(1.02);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18), 0 0 0 1px var(--primary);
+    border-color: var(--primary);
+    z-index: 10;
+    pointer-events: none;
+}
+
+.repo-item.dragging .repo-drag-handle {
+    cursor: grabbing;
+}
+
+/* 拖拽悬停时的插入位置：虚线框 + 左侧高亮 + 轻微下压/展开 */
+.repo-item.drag-over {
+    border-color: var(--primary);
+    border-style: dashed;
+    border-width: 2px;
+    background: var(--bg-secondary);
+    box-shadow: inset 0 0 0 1px rgba(13, 148, 136, 0.15);
+    transform: scale(1.01);
+}
+
+.repo-item.drag-over::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: var(--primary);
+    border-radius: 2px 0 0 2px;
+    animation: drag-over-pulse 0.6s ease-in-out infinite;
+}
+
+@keyframes drag-over-pulse {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
+}
+
+/* 当前选中项作为放置目标时，仍显示放置反馈 */
+.repo-item.active.drag-over {
+    transform: scale(1.01);
+    border-style: dashed;
+    background: rgba(13, 148, 136, 0.12);
+}
+
+[data-theme="dark"] .repo-item.active.drag-over {
+    background: rgba(20, 184, 166, 0.15);
 }
 
 .repo-remove-btn {

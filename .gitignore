@@ -52,3 +52,8 @@ Desktop.ini
 
 # User data (开发环境)
 # 注意：打包后的应用数据在系统目录，不需要忽略
+
+# Environment variables
+.env
+.env.local
+.env.*.local

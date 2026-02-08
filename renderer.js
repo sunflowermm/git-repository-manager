@@ -46,6 +46,7 @@ function initElements() {
             clone: document.getElementById('btn-clone'),
             batch: document.getElementById('btn-batch'),
             help: document.getElementById('btn-help'),
+            update: document.getElementById('btn-update'),
             theme: document.getElementById('btn-theme'),
             commit: document.getElementById('btn-commit'),
             commitPush: document.getElementById('btn-commit-push'),
@@ -106,7 +107,8 @@ window.addEventListener('beforeunload', () => {
 
 // 初始化应用
 async function init() {
-    log('🌻 向日葵Git仓库管理 v2.5 已启动', 'success');
+    const appVersion = await ipcRenderer.invoke('get-app-version');
+    log(`🌻 向日葵Git仓库管理 v${appVersion} 已启动`, 'success');
     
     // 检查 Git
     const gitCheck = await ipcRenderer.invoke('check-git');
@@ -118,6 +120,9 @@ async function init() {
     
     // 加载配置
     await loadConfig();
+    
+    // 监听更新事件
+    setupUpdateListeners();
 }
 
 // 加载配置
@@ -166,6 +171,7 @@ function setupEventListeners() {
     btn.clone?.addEventListener('click', openCloneDialog);
     btn.batch?.addEventListener('click', openBatchDialog);
     btn.help?.addEventListener('click', showHelp);
+    btn.update?.addEventListener('click', checkForUpdates);
     btn.theme?.addEventListener('click', toggleTheme);
     btn.commit?.addEventListener('click', quickCommit);
     btn.commitPush?.addEventListener('click', commitAndPush);
@@ -250,14 +256,7 @@ async function refreshRepoList(silent = false) {
         if (state.currentRepo) {
             try {
                 const repoInfo = await ipcRenderer.invoke('get-repo-info', state.currentRepo.path);
-                const updatedRepo = state.repos.find(r => r.path === state.currentRepo.path);
-                if (updatedRepo && repoInfo.status) {
-                    updatedRepo.modified = repoInfo.status.modified || 0;
-                    updatedRepo.staged = repoInfo.status.staged || 0;
-                    updatedRepo.untracked = repoInfo.status.untracked || 0;
-                    state.currentRepo = updatedRepo;
-                    renderRepoList();
-                }
+                updateRepoStatus(state.currentRepo.path, repoInfo);
                 updateRepoInfo(repoInfo);
             } catch (error) {
                 // 静默处理
@@ -413,6 +412,22 @@ function filterRepos() {
     }, 200);
 }
 
+// 更新仓库状态信息（辅助函数）
+function updateRepoStatus(repoPath, repoInfo) {
+    const updatedRepo = state.repos.find(r => r.path === repoPath);
+    if (updatedRepo && repoInfo?.status) {
+        Object.assign(updatedRepo, {
+            modified: repoInfo.status.modified || 0,
+            staged: repoInfo.status.staged || 0,
+            untracked: repoInfo.status.untracked || 0
+        });
+        if (state.currentRepo?.path === repoPath) {
+            state.currentRepo = updatedRepo;
+            renderRepoList();
+        }
+    }
+}
+
 // 选择仓库
 async function selectRepo(repo) {
     const latestRepo = state.repos.find(r => r.path === repo.path) || repo;
@@ -423,14 +438,7 @@ async function selectRepo(repo) {
     
     try {
         const repoInfo = await ipcRenderer.invoke('get-repo-info', latestRepo.path);
-        const updatedRepo = state.repos.find(r => r.path === latestRepo.path);
-        if (updatedRepo && repoInfo.status) {
-            updatedRepo.modified = repoInfo.status.modified || 0;
-            updatedRepo.staged = repoInfo.status.staged || 0;
-            updatedRepo.untracked = repoInfo.status.untracked || 0;
-            state.currentRepo = updatedRepo;
-            renderRepoList();
-        }
+        updateRepoStatus(latestRepo.path, repoInfo);
         updateRepoInfo(repoInfo);
     } catch (error) {
         log(`获取仓库信息失败: ${error.message}`, 'error');
@@ -581,6 +589,14 @@ async function refreshCurrentRepo() {
         if (updatedRepo) {
             state.currentRepo = updatedRepo;
             renderRepoList();
+            // 更新仓库详细信息
+            try {
+                const repoInfo = await ipcRenderer.invoke('get-repo-info', state.currentRepo.path);
+                updateRepoStatus(state.currentRepo.path, repoInfo);
+                updateRepoInfo(repoInfo);
+            } catch (error) {
+                // 静默处理
+            }
         }
     }
 }
@@ -835,20 +851,24 @@ function createPlatformConfigContent() {
     
     platforms.forEach((platform, index) => {
         const config = state.platformConfig[platform] || {};
+        const authType = config.auth_type || 'password';
+        const isSSH = authType === 'ssh';
+        const isPassword = authType === 'password';
+        
         html += `
             <div class="platform-panel" data-platform="${platform}" style="display: ${index === 0 ? 'block' : 'none'}">
                 <div class="form-group">
                     <label class="form-label">认证方式</label>
                     <select class="form-select" data-field="auth_type" data-platform="${platform}">
-                        <option value="password" ${config.auth_type === 'password' ? 'selected' : ''}>账号密码/Token</option>
-                        <option value="ssh" ${config.auth_type === 'ssh' ? 'selected' : ''}>SSH密钥</option>
+                        <option value="password" ${authType === 'password' ? 'selected' : ''}>账号密码/Token</option>
+                        <option value="ssh" ${authType === 'ssh' ? 'selected' : ''}>SSH密钥</option>
                     </select>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">用户名</label>
-                    <input type="text" class="form-input" data-field="username" data-platform="${platform}" value="${config.username || ''}" placeholder="GitHub用户名">
+                    <label class="form-label">账户</label>
+                    <input type="text" class="form-input" data-field="username" data-platform="${platform}" value="${config.username || ''}" placeholder="账户名">
                 </div>
-                <div class="form-group">
+                <div class="form-group" data-password-only="${platform}" style="display: ${isPassword ? 'block' : 'none'}">
                     <label class="form-label">密码/Token</label>
                     <input type="password" class="form-input" data-field="password" data-platform="${platform}" value="${config.password || ''}" placeholder="Personal Access Token">
                 </div>
@@ -856,7 +876,7 @@ function createPlatformConfigContent() {
                     <label class="form-label">邮箱</label>
                     <input type="text" class="form-input" data-field="email" data-platform="${platform}" value="${config.email || ''}" placeholder="your@email.com">
                 </div>
-                <div class="form-group" data-ssh-only="${platform}">
+                <div class="form-group" data-ssh-only="${platform}" style="display: ${isSSH ? 'block' : 'none'}">
                     <label class="form-label">SSH 私钥</label>
                     <div class="ssh-key-row">
                         <input type="text" class="form-input" data-field="ssh_key_path" data-platform="${platform}" value="${escapeAttr(config.ssh_key_path || '')}" placeholder="未填则自动识别 ~/.ssh 下的密钥" readonly>
@@ -866,13 +886,13 @@ function createPlatformConfigContent() {
                     <small class="form-hint">点击「浏览」会直接打开 .ssh 目录</small>
                 </div>
                 ${platform === 'GitHub' ? `
-                <div class="form-group">
+                <div class="form-group" data-password-only="${platform}" style="display: ${isPassword ? 'block' : 'none'}">
                     <label style="display: flex; align-items: center; gap: 10px;">
                         <input type="checkbox" class="form-checkbox" data-field="use_proxy" data-platform="${platform}" ${config.use_proxy ? 'checked' : ''}>
                         <span>使用代理（HTTPS 拉取/推送更顺畅）</span>
                     </label>
                 </div>
-                <div class="form-group" data-proxy-only="${platform}" style="display: ${config.use_proxy ? 'block' : 'none'}">
+                <div class="form-group" data-proxy-only="${platform}" style="display: ${config.use_proxy && isPassword ? 'block' : 'none'}">
                     <label class="form-label">代理地址</label>
                     <select class="form-select" data-field="proxy_preset" data-platform="${platform}" style="margin-bottom:8px;">
                         <option value="">自定义（下方填写）</option>
@@ -890,13 +910,15 @@ function createPlatformConfigContent() {
     return html;
 }
 
-// 选择 SSH 密钥：对话框直接打开 ~/.ssh，选后写入 state 并锁定
+// 选择 SSH 密钥：对话框直接打开 ~/.ssh，选后写入 state 并更新UI
 window.selectSSHKey = async function(platform) {
     const sshDir = await ipcRenderer.invoke('get-ssh-dir');
     const filePath = await ipcRenderer.invoke('select-file', sshDir);
     if (!filePath) return;
+    
     if (!state.platformConfig[platform]) state.platformConfig[platform] = {};
     state.platformConfig[platform].ssh_key_path = filePath;
+    
     const input = document.querySelector(`input[data-field="ssh_key_path"][data-platform="${platform}"]`);
     if (input) input.value = filePath;
 };
@@ -904,7 +926,8 @@ window.selectSSHKey = async function(platform) {
 // 清除 SSH 密钥路径
 window.clearSSHKey = function(platform) {
     if (!state.platformConfig[platform]) state.platformConfig[platform] = {};
-    state.platformConfig[platform].ssh_key_path = '';
+    delete state.platformConfig[platform].ssh_key_path;
+    
     const input = document.querySelector(`input[data-field="ssh_key_path"][data-platform="${platform}"]`);
     if (input) input.value = '';
 };
@@ -1056,11 +1079,11 @@ async function openCloneDialog() {
         
         if (!url) {
             showMessage('请输入仓库URL', 'warning');
-            return;
+            return false; // 验证失败，不关闭窗口
         }
         if (!targetDir) {
             showMessage('请选择克隆目标目录', 'warning');
-            return;
+            return false; // 验证失败，不关闭窗口
         }
         
         const config = sanitizeConfig(state.platformConfig[platform] || {});
@@ -1079,7 +1102,6 @@ async function openCloneDialog() {
             }
             log('克隆成功，已加入仓库列表', 'success');
             showMessage('克隆成功！', 'success');
-            closeModal();
             await refreshRepoList();
         } catch (error) {
             log(`克隆失败: ${error.message}`, 'error');
@@ -1138,7 +1160,7 @@ function openBatchDialog() {
         
         if (selectedRepos.length === 0) {
             showMessage('请至少选择一个仓库', 'warning');
-            return;
+            return false; // 验证失败，不关闭窗口
         }
         
         const operation = document.getElementById('batch-operation').value;
@@ -1194,7 +1216,6 @@ function openBatchDialog() {
         }
         
         showMessage(`批量操作完成！成功: ${successCount}, 失败: ${failCount}`, successCount > 0 ? 'success' : 'error');
-        closeModal();
         await refreshRepoList();
     });
 }
@@ -1300,7 +1321,16 @@ function showModal(title, content, onConfirm, showCancel = true) {
     
     if (onConfirm) {
         window.confirmModal = async () => {
-            await onConfirm();
+            try {
+                const result = await onConfirm();
+                // 如果 onConfirm 返回 false，则不关闭窗口（用于验证失败等情况）
+                if (result !== false) {
+                    closeModal();
+                }
+            } catch (error) {
+                console.error('Modal confirm error:', error);
+                closeModal();
+            }
         };
     }
     
@@ -1314,12 +1344,14 @@ function showModal(title, content, onConfirm, showCancel = true) {
     
     overlay.style.display = 'flex';
     
-    overlay.addEventListener('click', function closeOnOverlay(e) {
+    // 点击遮罩层关闭（只保留一个事件监听器）
+    const closeOnOverlay = (e) => {
         if (e.target === overlay) {
             closeModal();
             overlay.removeEventListener('click', closeOnOverlay);
         }
-    });
+    };
+    overlay.addEventListener('click', closeOnOverlay);
 }
 
 // 关闭模态框
@@ -1338,11 +1370,14 @@ function showInputModal(title, message, defaultValue = '', placeholder = '') {
             </div>
         `;
         
+        let resolved = false;
         showModal(title, content, async () => {
             const input = document.getElementById('input-modal-value');
             const value = input ? input.value.trim() : '';
-            closeModal();
-            resolve(value || null);
+            if (!resolved) {
+                resolved = true;
+                resolve(value || null);
+            }
         }, true);
         
         // 自动聚焦输入框
@@ -1360,8 +1395,11 @@ function showInputModal(title, message, defaultValue = '', placeholder = '') {
                         }
                     } else if (e.key === 'Escape') {
                         e.preventDefault();
-                        closeModal();
-                        resolve(null);
+                        if (!resolved) {
+                            resolved = true;
+                            closeModal();
+                            resolve(null);
+                        }
                     }
                 });
             }
@@ -1429,24 +1467,45 @@ function setupPlatformTabs() {
         });
     });
     
-    // 设置认证方式切换显示SSH相关字段
+    // 设置认证方式切换显示/隐藏相关字段
     document.querySelectorAll('select[data-field="auth_type"]').forEach(select => {
-        select.addEventListener('change', () => {
+        const updateAuthFields = () => {
             const platform = select.dataset.platform;
+            const isSSH = select.value === 'ssh';
+            const isPassword = select.value === 'password';
+            
+            // SSH相关字段
             const sshGroup = document.querySelector(`div[data-ssh-only="${platform}"]`);
-            if (sshGroup) {
-                sshGroup.style.display = select.value === 'ssh' ? 'block' : 'none';
+            if (sshGroup) sshGroup.style.display = isSSH ? 'block' : 'none';
+            
+            // 密码/Token字段
+            const passwordGroup = document.querySelector(`div[data-password-only="${platform}"]`);
+            if (passwordGroup) passwordGroup.style.display = isPassword ? 'block' : 'none';
+            
+            // GitHub代理字段（仅在密码模式下显示）
+            if (platform === 'GitHub') {
+                const proxyGroup = document.querySelector(`div[data-proxy-only="${platform}"]`);
+                if (proxyGroup) {
+                    const useProxy = document.querySelector(`input[data-field="use_proxy"][data-platform="${platform}"]`);
+                    proxyGroup.style.display = (isPassword && useProxy?.checked) ? 'block' : 'none';
+                }
             }
-        });
+        };
+        
+        select.addEventListener('change', updateAuthFields);
+        // 初始化时也执行一次
+        updateAuthFields();
     });
     
     // 设置代理显示
     document.querySelectorAll('input[data-field="use_proxy"]').forEach(checkbox => {
         checkbox.addEventListener('change', () => {
             const platform = checkbox.dataset.platform;
+            const authSelect = document.querySelector(`select[data-field="auth_type"][data-platform="${platform}"]`);
+            const isPassword = authSelect?.value === 'password';
             const proxyGroup = document.querySelector(`div[data-proxy-only="${platform}"]`);
             if (proxyGroup) {
-                proxyGroup.style.display = checkbox.checked ? 'block' : 'none';
+                proxyGroup.style.display = (isPassword && checkbox.checked) ? 'block' : 'none';
             }
         });
     });
@@ -1454,15 +1513,15 @@ function setupPlatformTabs() {
 
 // 打开平台配置时：若某平台未填密钥路径，自动检测 ~/.ssh 下的 id_ed25519 / id_rsa 并填入
 async function setupPlatformAutoSshKey() {
-    const inputs = document.querySelectorAll('input[data-field="ssh_key_path"]');
     const defaultPath = await ipcRenderer.invoke('detect-default-ssh-key');
     if (!defaultPath) return;
-    inputs.forEach(input => {
+    
+    document.querySelectorAll('input[data-field="ssh_key_path"]').forEach(input => {
         if (!input.value && input.dataset.platform) {
-            input.value = defaultPath;
             const platform = input.dataset.platform;
             if (!state.platformConfig[platform]) state.platformConfig[platform] = {};
             state.platformConfig[platform].ssh_key_path = defaultPath;
+            input.value = defaultPath;
         }
     });
 }
@@ -1473,11 +1532,15 @@ function setupPlatformFormHandlers() {
         input.addEventListener('change', () => {
             const platform = input.dataset.platform;
             const field = input.dataset.field;
+            if (!platform || !field) return;
+            
             if (!state.platformConfig[platform]) state.platformConfig[platform] = {};
+            
             if (input.type === 'checkbox') {
                 state.platformConfig[platform][field] = input.checked;
             } else {
                 state.platformConfig[platform][field] = input.value;
+                // 代理预设选择时自动填充代理URL
                 if (field === 'proxy_preset' && input.value) {
                     state.platformConfig[platform].proxy_url = input.value;
                     const urlInput = document.querySelector(`input[data-field="proxy_url"][data-platform="${platform}"]`);
@@ -1737,5 +1800,147 @@ async function viewDiff() {
     } catch (error) {
         log(`查看差异失败: ${error.message}`, 'error');
         showMessage(`查看差异失败: ${error.message}`, 'error');
+    }
+}
+
+// ========== 自动更新功能 ==========
+
+let updateInfo = null;
+let updateDownloading = false;
+
+// 设置更新事件监听
+function setupUpdateListeners() {
+    ipcRenderer.on('update-status', (event, data) => {
+        handleUpdateStatus(data);
+    });
+    
+    ipcRenderer.on('update-progress', (event, progress) => {
+        handleUpdateProgress(progress);
+    });
+}
+
+// 处理更新状态
+function handleUpdateStatus(data) {
+    const { status, message, version, releaseNotes } = data;
+    
+    switch (status) {
+        case 'checking':
+            log('正在检查更新...', 'info');
+            break;
+        case 'available':
+            updateInfo = { version, releaseNotes };
+            showUpdateAvailableDialog(version, releaseNotes);
+            break;
+        case 'not-available':
+            showMessage('已是最新版本', 'success');
+            break;
+        case 'error':
+            log(`更新检查失败: ${message}`, 'error');
+            showMessage(`更新检查失败: ${message}`, 'error');
+            break;
+        case 'downloaded':
+            showUpdateDownloadedDialog(version);
+            break;
+    }
+}
+
+// 处理更新进度
+function handleUpdateProgress(progress) {
+    if (updateDownloading) {
+        const percent = progress.percent || 0;
+        const transferred = formatBytes(progress.transferred || 0);
+        const total = formatBytes(progress.total || 0);
+        log(`下载更新中: ${percent}% (${transferred}/${total})`, 'info');
+    }
+}
+
+// 格式化字节数
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+}
+
+// 显示更新可用对话框
+function showUpdateAvailableDialog(version, releaseNotes) {
+    const notes = releaseNotes ? `<div style="max-height: 200px; overflow-y: auto; margin-top: 10px; padding: 10px; background: var(--bg-tertiary); border-radius: 6px; font-size: 12px;">${releaseNotes}</div>` : '';
+    const content = `
+        <div class="form-group">
+            <p style="margin: 0; color: var(--text-primary);">发现新版本 <strong>v${version}</strong></p>
+            ${notes}
+            <p style="margin-top: 15px; color: var(--text-secondary); font-size: 12px;">是否现在下载并安装？</p>
+        </div>
+    `;
+    
+    showModal('发现新版本', content, async () => {
+        await downloadUpdate();
+    }, true);
+}
+
+// 显示更新下载完成对话框
+function showUpdateDownloadedDialog(version) {
+    const content = `
+        <div class="form-group">
+            <p style="margin: 0; color: var(--text-primary);">更新 v${version} 已下载完成</p>
+            <p style="margin-top: 15px; color: var(--text-secondary); font-size: 12px;">将在应用重启后自动安装</p>
+        </div>
+    `;
+    
+    showModal('更新已就绪', content, async () => {
+        await installUpdate();
+    }, true);
+}
+
+// 检查更新
+async function checkForUpdates() {
+    log('正在检查更新...', 'info');
+    showMessage('正在检查更新...', 'info');
+    
+    try {
+        const result = await ipcRenderer.invoke('check-for-updates');
+        if (!result.success) {
+            throw new Error(result.error || '检查更新失败');
+        }
+    } catch (error) {
+        log(`检查更新失败: ${error.message}`, 'error');
+        showMessage(`检查更新失败: ${error.message}`, 'error');
+    }
+}
+
+// 下载更新
+async function downloadUpdate() {
+    if (updateDownloading) {
+        showMessage('更新正在下载中...', 'info');
+        return;
+    }
+    
+    updateDownloading = true;
+    log('开始下载更新...', 'info');
+    showMessage('开始下载更新...', 'info');
+    
+    try {
+        const result = await ipcRenderer.invoke('download-update');
+        if (!result.success) {
+            throw new Error(result.error || '下载更新失败');
+        }
+    } catch (error) {
+        updateDownloading = false;
+        log(`下载更新失败: ${error.message}`, 'error');
+        showMessage(`下载更新失败: ${error.message}`, 'error');
+    }
+}
+
+// 安装更新
+async function installUpdate() {
+    log('准备安装更新，应用将重启...', 'info');
+    showMessage('应用将重启以安装更新...', 'info');
+    
+    try {
+        await ipcRenderer.invoke('install-update');
+    } catch (error) {
+        log(`安装更新失败: ${error.message}`, 'error');
+        showMessage(`安装更新失败: ${error.message}`, 'error');
     }
 }

@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { exec, spawn } = require('child_process');
 const simpleGit = require('simple-git');
+const { autoUpdater } = require('electron-updater');
 
 let mainWindow;
 const BOUNDS_FILE = 'window-bounds.json';
@@ -109,7 +110,74 @@ function createWindow() {
   mainWindow.loadFile('index.html');
 }
 
-app.whenReady().then(createWindow);
+// 配置自动更新
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = true;
+
+// 检查更新
+function checkForUpdates() {
+  if (process.env.NODE_ENV === 'development') return;
+  
+  autoUpdater.checkForUpdates().catch(() => {
+    // 静默处理错误
+  });
+}
+
+// 更新事件处理
+autoUpdater.on('checking-for-update', () => {
+  if (mainWindow) {
+    mainWindow.webContents.send('update-status', { status: 'checking', message: '正在检查更新...' });
+  }
+});
+
+autoUpdater.on('update-available', (info) => {
+  if (mainWindow) {
+    mainWindow.webContents.send('update-status', {
+      status: 'available',
+      message: `发现新版本 v${info.version}`,
+      version: info.version,
+      releaseNotes: info.releaseNotes
+    });
+  }
+});
+
+autoUpdater.on('update-not-available', () => {
+  if (mainWindow) {
+    mainWindow.webContents.send('update-status', { status: 'not-available', message: '已是最新版本' });
+  }
+});
+
+autoUpdater.on('error', (err) => {
+  if (mainWindow) {
+    mainWindow.webContents.send('update-status', { status: 'error', message: `更新检查失败: ${err.message}` });
+  }
+});
+
+autoUpdater.on('download-progress', (progressObj) => {
+  if (mainWindow) {
+    mainWindow.webContents.send('update-progress', {
+      percent: Math.round(progressObj.percent),
+      transferred: progressObj.transferred,
+      total: progressObj.total
+    });
+  }
+});
+
+autoUpdater.on('update-downloaded', (info) => {
+  if (mainWindow) {
+    mainWindow.webContents.send('update-status', {
+      status: 'downloaded',
+      message: '更新已下载完成，将在重启后安装',
+      version: info.version
+    });
+  }
+});
+
+app.whenReady().then(() => {
+  createWindow();
+  // 延迟检查更新，避免影响启动速度
+  setTimeout(checkForUpdates, 3000);
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
@@ -124,6 +192,34 @@ app.on('activate', () => {
 });
 
 // ========== IPC 处理程序 ==========
+
+// 更新相关IPC
+ipcMain.handle('check-for-updates', async () => {
+  try {
+    await autoUpdater.checkForUpdates();
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('download-update', async () => {
+  try {
+    await autoUpdater.downloadUpdate();
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('install-update', async () => {
+  autoUpdater.quitAndInstall(false);
+  return { success: true };
+});
+
+ipcMain.handle('get-app-version', () => {
+  return app.getVersion();
+});
 
 // 选择文件夹
 ipcMain.handle('select-folder', async () => {
@@ -197,10 +293,8 @@ ipcMain.handle('open-folder', async (event, folderPath) => {
     command = `xdg-open "${folderPath}"`;
   }
   
-  exec(command, (error) => {
-    if (error && process.env.NODE_ENV === 'development') {
-      console.error('打开文件夹失败:', error);
-    }
+  exec(command, () => {
+    // 静默处理错误
   });
 });
 
@@ -217,9 +311,7 @@ ipcMain.handle('load-config', async () => {
       return JSON.parse(data);
     }
   } catch (error) {
-    if (process.env.NODE_ENV === 'development') {
-      console.error('读取配置失败:', error);
-    }
+    // 静默处理错误
   }
   return null;
 });
@@ -236,9 +328,7 @@ ipcMain.handle('save-config', async (event, config) => {
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
     return true;
   } catch (error) {
-    if (process.env.NODE_ENV === 'development') {
-      console.error('保存配置失败:', error);
-    }
+    // 静默处理错误
     return false;
   }
 });

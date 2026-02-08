@@ -396,13 +396,10 @@ function renderRepoList() {
     elements.repoList.appendChild(fragment);
 }
 
-// 过滤仓库（防抖优化）
 let filterTimer = null;
 function filterRepos() {
     if (filterTimer) clearTimeout(filterTimer);
-    filterTimer = setTimeout(() => {
-        renderRepoList();
-    }, 200);
+    filterTimer = setTimeout(renderRepoList, 0);
 }
 
 // 更新仓库状态信息（辅助函数）
@@ -1647,19 +1644,15 @@ function removeNotification(notification) {
     }, 300);
 }
 
-// 日志输出（性能优化：批量更新）
 let logBuffer = [];
 let logTimer = null;
 
 function log(message, level = 'info') {
     if (!elements.logContainer) return;
-    
     const time = new Date().toLocaleTimeString('zh-CN');
     logBuffer.push({ message, level, time });
-    
-    // 防抖：批量更新DOM
     if (logTimer) clearTimeout(logTimer);
-    logTimer = setTimeout(flushLogs, 50);
+    logTimer = setTimeout(flushLogs, 0);
 }
 
 function flushLogs() {
@@ -1841,9 +1834,6 @@ function setupUpdateListeners() {
 function handleUpdateStatus(data) {
     const { status, message, version, releaseNotes } = data;
     switch (status) {
-        case 'checking':
-            log('正在检查更新...', 'info');
-            break;
         case 'available':
             log(`检查完成：发现新版本 v${version}`, 'info');
             showUpdateAvailableDialog(version, releaseNotes);
@@ -1853,6 +1843,7 @@ function handleUpdateStatus(data) {
             showMessage('已是最新版本', 'success');
             break;
         case 'error':
+            log(`更新检查失败: ${message}`, 'error');
             showMessage(`更新检查失败: ${message}`, 'error');
             break;
         case 'downloaded':
@@ -1951,8 +1942,7 @@ function showUpdateAvailableDialog(version, releaseNotes) {
     showModal('发现新版本', content, async () => {
         closeModal();
         showUpdateProgressModal();
-        await new Promise(r => { requestAnimationFrame(() => requestAnimationFrame(r)); });
-        await downloadUpdate();
+        requestAnimationFrame(() => { downloadUpdate(); });
         return false;
     }, true, { primaryLabel: '安装', cancelLabel: '取消' });
 }
@@ -1986,6 +1976,7 @@ function showUpdateDownloadedDialog(version) {
 }
 
 async function checkForUpdates() {
+    log('正在检查更新...', 'info');
     try {
         const result = await ipcRenderer.invoke('check-for-updates');
         if (result.skipped) {
@@ -1995,6 +1986,7 @@ async function checkForUpdates() {
         }
         if (!result.success) throw new Error(result.error || '检查更新失败');
     } catch (e) {
+        log(`检查更新失败: ${e.message}`, 'error');
         showMessage(`检查更新失败: ${e.message}`, 'error');
     }
 }

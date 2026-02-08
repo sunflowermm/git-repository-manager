@@ -1,6 +1,6 @@
 {
   "name": "git-manager-electron",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "🌻 向日葵Git仓库管理 - Electron版",
   "main": "main.js",
   "scripts": {

@@ -115,7 +115,9 @@ autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
 
 const GH_PROXY_HOST = 'gh-proxy.com';
+const CHECK_TIMEOUT_MS = 15000;
 
+/** 将 GitHub 请求改为走 gh-proxy：最终请求为 https://gh-proxy.com/https://github.com/... */
 function applyGhProxy(https) {
   const orig = https.request;
   https.request = function (options, callback) {
@@ -134,30 +136,38 @@ function removeGhProxy(https, orig) {
   if (https && orig) https.request = orig;
 }
 
-async function runWithProxyFallback(fn) {
-  const https = require('https');
-  const orig = applyGhProxy(https);
+/** 先直连 GitHub，失败再走 GH 代理（避免代理对 release 返回 404 导致误判） */
+async function runWithDirectFirstThenProxy(fn) {
   try {
     return await fn();
   } catch (e1) {
-    removeGhProxy(https, orig);
-    return await fn();
-  } finally {
-    removeGhProxy(https, orig);
+    const https = require('https');
+    const orig = applyGhProxy(https);
+    try {
+      return await fn();
+    } finally {
+      removeGhProxy(https, orig);
+    }
   }
 }
 
-function checkForUpdates() {
+function sendUpdateError(message) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-status', { status: 'error', message });
+  }
+}
+
+function doCheckForUpdates() {
   if (!app.isPackaged || process.env.NODE_ENV === 'development') return;
-  runWithProxyFallback(() => autoUpdater.checkForUpdates()).catch(() => {});
+  runWithDirectFirstThenProxy(() =>
+    Promise.race([
+      autoUpdater.checkForUpdates(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('检查更新超时，请检查网络')), CHECK_TIMEOUT_MS))
+    ])
+  ).catch((err) => {
+    sendUpdateError(err.message || '检查更新失败');
+  });
 }
-
-// 更新事件处理
-autoUpdater.on('checking-for-update', () => {
-  if (mainWindow) {
-    mainWindow.webContents.send('update-status', { status: 'checking', message: '正在检查更新...' });
-  }
-});
 
 autoUpdater.on('update-available', (info) => {
   if (mainWindow) {
@@ -204,8 +214,7 @@ autoUpdater.on('update-downloaded', (info) => {
 
 app.whenReady().then(() => {
   createWindow();
-  // 延迟检查更新，避免影响启动速度
-  setTimeout(checkForUpdates, 3000);
+  setImmediate(doCheckForUpdates);
 });
 
 app.on('window-all-closed', () => {
@@ -224,17 +233,18 @@ app.on('activate', () => {
 
 ipcMain.handle('check-for-updates', async () => {
   if (!app.isPackaged) return { success: true, skipped: true, reason: 'unpacked' };
-  try {
-    await runWithProxyFallback(() => autoUpdater.checkForUpdates());
-    return { success: true };
-  } catch (e) {
-    return { success: false, error: e.message };
-  }
+  runWithDirectFirstThenProxy(() =>
+    Promise.race([
+      autoUpdater.checkForUpdates(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('检查更新超时，请检查网络')), CHECK_TIMEOUT_MS))
+    ])
+  ).catch((err) => sendUpdateError(err.message || '检查更新失败'));
+  return { success: true };
 });
 
 ipcMain.handle('download-update', async () => {
   try {
-    await runWithProxyFallback(() => autoUpdater.downloadUpdate());
+    await runWithDirectFirstThenProxy(() => autoUpdater.downloadUpdate());
     return { success: true };
   } catch (e) {
     return { success: false, error: e.message };

@@ -561,18 +561,15 @@ async function getCommitMessage() {
 
 // 执行提交操作（统一处理）
 async function executeCommit(repoPath, message, config) {
-    // 设置用户信息
-    if (config && config.username && config.email) {
+    if (config?.username && config?.email) {
         await ipcRenderer.invoke('git-set-user', repoPath, config.username, config.email);
     }
     
-    // 添加所有文件
     const addResult = await ipcRenderer.invoke('git-add', repoPath);
     if (!addResult.success) {
         throw new Error(addResult.error);
     }
     
-    // 提交
     const commitResult = await ipcRenderer.invoke('git-commit', repoPath, message);
     if (!commitResult.success) {
         throw new Error(commitResult.error);
@@ -851,7 +848,7 @@ function createPlatformConfigContent() {
     
     platforms.forEach((platform, index) => {
         const config = state.platformConfig[platform] || {};
-        const authType = config.auth_type || 'password';
+        const authType = config.auth_type || 'ssh';
         const isSSH = authType === 'ssh';
         const isPassword = authType === 'password';
         
@@ -860,8 +857,8 @@ function createPlatformConfigContent() {
                 <div class="form-group">
                     <label class="form-label">认证方式</label>
                     <select class="form-select" data-field="auth_type" data-platform="${platform}">
-                        <option value="password" ${authType === 'password' ? 'selected' : ''}>账号密码/Token</option>
                         <option value="ssh" ${authType === 'ssh' ? 'selected' : ''}>SSH密钥</option>
+                        <option value="password" ${authType === 'password' ? 'selected' : ''}>账号密码/Token</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -941,6 +938,31 @@ function openSyncConfig() {
             await selectRepo(state.currentRepo);
         }
     });
+    
+    // 设置主仓库选择变化时，自动从从仓库列表中移除主仓库
+    setTimeout(() => {
+        const mainRepoSelect = document.getElementById('sync-main-repo');
+        if (mainRepoSelect) {
+            mainRepoSelect.addEventListener('change', updateSubordinateReposList);
+            updateSubordinateReposList(); // 初始化
+        }
+    }, 100);
+}
+
+// 更新从仓库列表：移除主仓库选项
+function updateSubordinateReposList() {
+    const mainRepo = document.getElementById('sync-main-repo')?.value;
+    const container = document.getElementById('sync-subordinate-repos');
+    if (!container) return;
+    
+    container.innerHTML = state.repos
+        .filter(r => !mainRepo || r.name !== mainRepo)
+        .map(r => `
+            <label style="display: block; margin-bottom: 8px;">
+                <input type="checkbox" value="${r.name}" class="form-checkbox">
+                <span>${r.name}</span>
+            </label>
+        `).join('');
 }
 
 // 创建同步配置内容
@@ -1003,7 +1025,7 @@ window.saveSyncGroup = function() {
     }
     
     const checkboxes = document.querySelectorAll('#sync-subordinate-repos input[type="checkbox"]:checked');
-    const subordinates = Array.from(checkboxes).map(cb => cb.value).filter(name => name !== mainRepo);
+    const subordinates = Array.from(checkboxes).map(cb => cb.value);
     
     if (subordinates.length === 0) {
         showMessage('请至少选择一个从仓库', 'warning');

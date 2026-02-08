@@ -1,4 +1,4 @@
-# 🌻 向日葵Git仓库管理 v2.5
+# 🌻 向日葵Git仓库管理
 
 基于 Electron 的现代化 Git 仓库管理工具，提供简洁直观的图形界面，支持多平台 Git 仓库的统一管理。
 
@@ -57,10 +57,8 @@ pnpm install
 # 运行开发版本
 pnpm dev
 
-# 打包应用
-pnpm build:win    # Windows自动检测架构
-pnpm build:win64  # Windows 64位
-pnpm build        # 所有平台
+# 打包应用（不发布）
+pnpm build
 ```
 
 ## 📖 使用指南
@@ -254,15 +252,25 @@ git config --global user.email "your@email.com"
 
 应用支持自动更新功能，通过 GitHub Releases 自动检查并安装更新。
 
-### 用户更新方式
+### 更新流程
 
-1. **自动检查**：应用启动 3 秒后自动检查更新
-2. **手动检查**：点击工具栏的 **「🔄 检查更新」** 按钮
-3. **下载安装**：发现新版本后，点击「确定」下载并安装
+1. **检查更新**：
+   - 应用启动 3 秒后自动检查更新
+   - 或点击工具栏的 **「🔄 检查更新」** 按钮手动检查
 
-> 💡 **提示**：更新完全自动化，用户无需手动下载安装包。
+2. **发现新版本**：
+   - 应用会提示发现新版本
+   - 显示新版本号和更新说明
 
----
+3. **下载更新**：
+   - 点击「确定」开始下载更新包
+   - 下载过程中显示进度条
+
+4. **安装更新**：
+   - 下载完成后，应用会提示「更新已下载完成，将在重启后安装」
+   - 关闭应用后，下次启动时会自动安装新版本
+
+> 💡 **提示**：更新需要重启应用才能生效，不是热更新。建议在完成当前工作后重启应用。
 
 ---
 
@@ -270,24 +278,33 @@ git config --global user.email "your@email.com"
 
 ### 发布新版本
 
-详细发布流程请查看 [DEVELOPER.md](DEVELOPER.md)
+**前置准备：**
+1. 在项目根目录创建 `.env` 文件，填入 GitHub Token：
+   ```
+   GH_TOKEN=你的token
+   ```
+   > 💡 获取 Token：https://github.com/settings/tokens（需要 `repo` 权限）
 
-**快速发布步骤：**
-1. 更新 `package.json` 中的版本号
-2. 确保 `.env` 文件已配置 GitHub Token
-3. 运行 `pnpm run publish:win64` 构建并发布
+2. 准备图标文件（放在 `assets/` 目录）：
+   - `icon.ico` - Windows 图标（必需）
+
+**发布步骤：**
+1. 在 `history/` 目录创建版本更新日志文件（如 `v2.6.0.md`）
+2. 更新 `package.json` 中的版本号
+3. 运行 `pnpm run publish` 构建并发布 Windows 版本（x64 和 ia32）
+
+> 💡 **提示**：发布脚本会自动读取 `history/` 目录中最新版本的 `.md` 文件作为 Release 说明
+
+**验证发布：**
+- 访问：https://github.com/sunflowermm/git-repository-manager/releases
+- 如果看到 "Draft releases"，点击进入并手动点击 "Publish release"
+- 确认所有架构的安装包和更新文件（latest.yml）已上传
 
 > 📖 **注意**：发布更新是开发者操作，用户无需关心。用户安装的应用会自动从 GitHub Releases 检查更新。
 
 ## 📝 更新日志
 
-### v2.5.0
-- ✨ 新增通知系统，替换原有的 alert 弹窗
-- 🎨 优化 UI 动画效果和响应式设计
-- 🔧 优化代码结构，提取重复逻辑
-- 🐛 修复多个已知问题
-- 📚 完善文档和使用说明
-- 🔄 新增自动更新功能
+详细更新日志请查看 [history/](history/) 目录
 
 ## 🤝 贡献
 

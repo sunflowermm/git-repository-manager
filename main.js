@@ -205,7 +205,18 @@ ipcMain.handle('check-for-updates', async () => {
 
 ipcMain.handle('download-update', async () => {
   try {
+    const https = require('https');
+    const originalRequest = https.request;
+    https.request = function(options, callback) {
+      if (options.hostname && (options.hostname.includes('github.com') || options.hostname.includes('githubusercontent.com'))) {
+        const fullUrl = `https://${options.hostname}${options.path || ''}`;
+        options.hostname = 'gh-proxy.com';
+        options.path = '/' + fullUrl;
+      }
+      return originalRequest.call(this, options, callback);
+    };
     await autoUpdater.downloadUpdate();
+    https.request = originalRequest;
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };

@@ -135,9 +135,10 @@ function removeGhProxy(https, orig) {
   if (https && orig) https.request = orig;
 }
 
-function sendUpdateStatus(status, payload) {
+function sendUpdateStatus(status, payload = {}) {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('update-status', { status, ...payload });
+    sendUpdateLog(`更新: 发送状态 ${status}`, 'info');
+    mainWindow.webContents.send('update-status', status, { ...payload });
   }
 }
 
@@ -145,6 +146,15 @@ function sendUpdateLog(message, level = 'info') {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('update-log', { message, level });
   }
+}
+
+function formatErrorForLog(err) {
+  if (!err) return '未知错误';
+  const msg = err.message || String(err);
+  const stack = err.stack;
+  if (!stack || stack === msg) return msg;
+  const lines = stack.split('\n').slice(0, 8);
+  return `[错误] ${msg}\n${lines.join('\n')}`;
 }
 
 function runCheckWithTimeout() {
@@ -158,6 +168,7 @@ async function performUpdateCheck() {
   sendUpdateLog('更新: 直连检查中(12s 超时)', 'info');
   try {
     const result = await runCheckWithTimeout();
+    sendUpdateLog('更新: runCheckWithTimeout 已 resolve，等待 autoUpdater 事件', 'info');
     sendUpdateLog('更新: 直连检查完成', 'info');
     return result;
   } catch (e1) {
@@ -176,14 +187,18 @@ async function performUpdateCheck() {
 
 function doCheckForUpdates() {
   if (!app.isPackaged || process.env.NODE_ENV === 'development') return;
+  sendUpdateLog('更新: 启动时自动检查', 'info');
   setImmediate(() => {
     performUpdateCheck().catch((err) => {
+      sendUpdateLog(formatErrorForLog(err), 'error');
       sendUpdateStatus('error', { message: err.message || '检查更新失败' });
     });
   });
 }
 
 autoUpdater.on('update-available', (info) => {
+  sendUpdateLog('更新: 事件 update-available', 'info');
+  sendUpdateLog(`更新: 发现新版本 v${info.version}`, 'info');
   sendUpdateStatus('available', {
     message: `发现新版本 v${info.version}`,
     version: info.version,
@@ -192,10 +207,12 @@ autoUpdater.on('update-available', (info) => {
 });
 
 autoUpdater.on('update-not-available', () => {
+  sendUpdateLog('更新: 事件 update-not-available', 'info');
   sendUpdateStatus('not-available', { message: '已是最新版本' });
 });
 
 autoUpdater.on('error', (err) => {
+  sendUpdateLog(formatErrorForLog(err), 'error');
   sendUpdateStatus('error', { message: err.message ? `更新检查失败: ${err.message}` : '检查更新失败' });
 });
 
@@ -210,6 +227,7 @@ autoUpdater.on('download-progress', (progressObj) => {
 });
 
 autoUpdater.on('update-downloaded', (info) => {
+  sendUpdateLog('更新: 事件 update-downloaded', 'info');
   sendUpdateStatus('downloaded', { message: '更新已下载完成', version: info.version });
 });
 
@@ -234,8 +252,10 @@ app.on('activate', () => {
 
 ipcMain.handle('check-for-updates', async () => {
   if (!app.isPackaged) return { success: true, skipped: true, reason: 'unpacked' };
+  sendUpdateLog('更新: IPC 收到检查请求', 'info');
   setImmediate(() => {
     performUpdateCheck().catch((err) => {
+      sendUpdateLog(formatErrorForLog(err), 'error');
       sendUpdateStatus('error', { message: err.message || '检查更新失败' });
     });
   });
@@ -247,6 +267,7 @@ ipcMain.handle('download-update', async () => {
     sendUpdateLog('更新: 下载中(直连)', 'info');
     try {
       await autoUpdater.downloadUpdate();
+      sendUpdateLog('更新: 直连下载完成', 'info');
       return { success: true };
     } catch (e1) {
       sendUpdateLog('更新: 直连下载失败，改用代理', 'info');
@@ -254,17 +275,20 @@ ipcMain.handle('download-update', async () => {
       const orig = applyGhProxy(https);
       try {
         await autoUpdater.downloadUpdate();
+        sendUpdateLog('更新: 代理下载完成', 'info');
         return { success: true };
       } finally {
         removeGhProxy(https, orig);
       }
     }
   } catch (e) {
+    sendUpdateLog(formatErrorForLog(e), 'error');
     return { success: false, error: e.message };
   }
 });
 
 ipcMain.handle('install-update', async () => {
+  sendUpdateLog('更新: 即将退出并安装', 'info');
   autoUpdater.quitAndInstall(false);
   return { success: true };
 });

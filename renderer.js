@@ -1838,7 +1838,10 @@ function clearUpdateCheckWatchdog() {
 function setupUpdateListeners() {
     if (updateListenersSetup) return;
     updateListenersSetup = true;
-    ipcRenderer.on('update-status', handleUpdateStatus);
+    ipcRenderer.on('update-status', (e, status, payload) => {
+        const data = { status, ...(payload || {}) };
+        handleUpdateStatus(data);
+    });
     ipcRenderer.on('update-progress', handleUpdateProgress);
     ipcRenderer.on('update-log', (e, { message, level }) => {
         if (message) log(message, level || 'info');
@@ -1846,9 +1849,14 @@ function setupUpdateListeners() {
 }
 
 function handleUpdateStatus(data) {
-    const { status, message, version, releaseNotes } = data;
+    if (!data || typeof data !== 'object') return;
+    const status = data.status;
+    const { message, version, releaseNotes } = data;
     clearUpdateCheckWatchdog();
-    log(`更新: 收到状态 ${status}`, 'info');
+    log(`更新: 收到状态 ${String(status ?? '(未知)')}`, 'info');
+    if (status === undefined || status === null) {
+        log(`更新: 调试 data.keys=${Object.keys(data).join(',')}`, 'info');
+    }
     switch (status) {
         case 'available':
             log(`检查完成：发现新版本 v${version}`, 'info');
@@ -1869,6 +1877,7 @@ function handleUpdateStatus(data) {
     }
 }
 
+let _lastLoggedProgressPct = -1;
 function handleUpdateProgress(progress) {
     const bar = document.getElementById('update-progress-bar');
     const text = document.getElementById('update-progress-text');
@@ -1876,6 +1885,10 @@ function handleUpdateProgress(progress) {
     const pct = progress.percent || 0;
     bar.style.width = `${pct}%`;
     text.textContent = `${pct}% (${formatBytes(progress.transferred || 0)}/${formatBytes(progress.total || 0)})`;
+    if (pct >= 100 && _lastLoggedProgressPct < 100) {
+        _lastLoggedProgressPct = 100;
+        log('更新: 下载进度 100%', 'info');
+    }
 }
 
 // 格式化字节数
@@ -2041,6 +2054,7 @@ async function downloadUpdate() {
         return;
     }
     updateDownloading = true;
+    _lastLoggedProgressPct = -1;
     log('更新: 开始下载', 'info');
     try {
         const result = await ipcRenderer.invoke('download-update');

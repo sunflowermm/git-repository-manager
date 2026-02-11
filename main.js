@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, screen, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { exec, spawn } = require('child_process');
@@ -115,24 +115,40 @@ autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
 
 const GH_PROXY_HOST = 'gh-proxy.com';
-const CHECK_TIMEOUT_MS = 20000;
+const CHECK_TIMEOUT_MS = 30000;
 
-function applyGhProxy(https) {
-  const orig = https.request;
-  https.request = function (options, callback) {
-    const host = options.hostname || '';
-    if (host.includes('github.com') || host.includes('githubusercontent.com')) {
-      const fullUrl = 'https://' + host + (options.path || '');
-      options.hostname = GH_PROXY_HOST;
-      options.path = '/' + fullUrl;
+let proxyRemoveListener = null;
+
+function applyGhProxy() {
+  if (proxyRemoveListener) return;
+  
+  const defaultSession = session.defaultSession;
+  const proxyHandler = (details, callback) => {
+    const originalUrl = details.url;
+    if (originalUrl.includes('github.com') || originalUrl.includes('githubusercontent.com')) {
+      const proxyUrl = `https://${GH_PROXY_HOST}/${originalUrl}`;
+      sendUpdateLog(`更新: 代理请求 ${originalUrl} -> ${proxyUrl}`, 'info');
+      callback({ redirectURL: proxyUrl });
+    } else {
+      callback({});
     }
-    return orig.call(this, options, callback);
   };
-  return orig;
+  
+  proxyRemoveListener = defaultSession.webRequest.onBeforeRequest(
+    { urls: ['https://github.com/*', 'https://*.github.com/*', 'https://*.githubusercontent.com/*'] },
+    proxyHandler
+  );
 }
 
-function removeGhProxy(https, orig) {
-  if (https && orig) https.request = orig;
+function removeGhProxy() {
+  if (proxyRemoveListener) {
+    try {
+      proxyRemoveListener();
+      proxyRemoveListener = null;
+    } catch (e) {
+      proxyRemoveListener = null;
+    }
+  }
 }
 
 function sendUpdateStatus(status, payload = {}) {
@@ -156,82 +172,107 @@ function formatErrorForLog(err) {
   return `[错误] ${msg}\n${lines.join('\n')}`;
 }
 
-function checkForUpdatesWithTimeout(useProxy = false) {
+let isCheckingUpdate = false;
+
+function checkForUpdatesWithTimeout() {
+  if (isCheckingUpdate) {
+    return Promise.reject(new Error('更新检查正在进行中，请勿重复调用'));
+  }
+  
   return new Promise((resolve, reject) => {
+    isCheckingUpdate = true;
     let timeoutId;
     let resolved = false;
+    
     const cleanup = () => {
-      if (timeoutId) clearTimeout(timeoutId);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
       resolved = true;
+      isCheckingUpdate = false;
     };
 
     const onUpdateAvailable = (info) => {
       if (resolved) return;
+      sendUpdateLog(`更新: 发现新版本 v${info.version}`, 'info');
       cleanup();
-      autoUpdater.removeListener('update-available', onUpdateAvailable);
-      autoUpdater.removeListener('update-not-available', onUpdateNotAvailable);
-      autoUpdater.removeListener('error', onError);
+      removeListeners();
+      sendUpdateStatus('available', {
+        message: `发现新版本 v${info.version}`,
+        version: info.version,
+        releaseNotes: info.releaseNotes
+      });
       resolve(info);
     };
 
     const onUpdateNotAvailable = () => {
       if (resolved) return;
+      sendUpdateLog('更新: 已是最新版本', 'info');
       cleanup();
-      autoUpdater.removeListener('update-available', onUpdateAvailable);
-      autoUpdater.removeListener('update-not-available', onUpdateNotAvailable);
-      autoUpdater.removeListener('error', onError);
+      removeListeners();
+      sendUpdateStatus('not-available', { message: '已是最新版本' });
       resolve(null);
     };
 
     const onError = (err) => {
       if (resolved) return;
+      sendUpdateLog(formatErrorForLog(err), 'error');
       cleanup();
-      autoUpdater.removeListener('update-available', onUpdateAvailable);
-      autoUpdater.removeListener('update-not-available', onUpdateNotAvailable);
-      autoUpdater.removeListener('error', onError);
+      removeListeners();
+      sendUpdateStatus('error', { message: err.message || '检查更新失败' });
       reject(err);
     };
 
+    const removeListeners = () => {
+      try {
+        autoUpdater.removeAllListeners('update-available');
+        autoUpdater.removeAllListeners('update-not-available');
+        autoUpdater.removeAllListeners('error');
+      } catch (e) {}
+    };
+
+    // 先清理所有之前的监听器，避免重复
+    removeListeners();
+    
+    // 设置新的监听器（使用 once 确保只触发一次）
     autoUpdater.once('update-available', onUpdateAvailable);
     autoUpdater.once('update-not-available', onUpdateNotAvailable);
     autoUpdater.once('error', onError);
 
+    // 设置超时
     timeoutId = setTimeout(() => {
       if (resolved) return;
       cleanup();
-      autoUpdater.removeListener('update-available', onUpdateAvailable);
-      autoUpdater.removeListener('update-not-available', onUpdateNotAvailable);
-      autoUpdater.removeListener('error', onError);
+      removeListeners();
       reject(new Error('检查更新超时，请检查网络'));
     }, CHECK_TIMEOUT_MS);
 
+    // 调用检查更新
     autoUpdater.checkForUpdates().catch((err) => {
       if (resolved) return;
       cleanup();
-      autoUpdater.removeListener('update-available', onUpdateAvailable);
-      autoUpdater.removeListener('update-not-available', onUpdateNotAvailable);
-      autoUpdater.removeListener('error', onError);
+      removeListeners();
       reject(err);
     });
   });
 }
 
 async function performUpdateCheck() {
-  sendUpdateLog('更新: 直连检查中(20s 超时)', 'info');
+  sendUpdateLog('更新: 直连检查中', 'info');
   try {
-    const result = await checkForUpdatesWithTimeout(false);
+    await checkForUpdatesWithTimeout();
     sendUpdateLog('更新: 直连检查完成', 'info');
-    return result;
   } catch (e1) {
     sendUpdateLog(`更新: 直连失败，改用代理重试 (${e1.message || ''})`, 'info');
-    const https = require('https');
-    const orig = applyGhProxy(https);
+    applyGhProxy();
+    // 等待一小段时间确保代理拦截器已生效
+    await new Promise(resolve => setTimeout(resolve, 100));
     try {
-      const result = await checkForUpdatesWithTimeout(true);
+      await checkForUpdatesWithTimeout();
       sendUpdateLog('更新: 代理检查完成', 'info');
-      return result;
     } finally {
-      removeGhProxy(https, orig);
+      removeGhProxy();
     }
   }
 }
@@ -246,24 +287,7 @@ function doCheckForUpdates() {
   });
 }
 
-autoUpdater.on('update-available', (info) => {
-  sendUpdateLog(`更新: 发现新版本 v${info.version}`, 'info');
-  sendUpdateStatus('available', {
-    message: `发现新版本 v${info.version}`,
-    version: info.version,
-    releaseNotes: info.releaseNotes
-  });
-});
-
-autoUpdater.on('update-not-available', () => {
-  sendUpdateLog('更新: 已是最新版本', 'info');
-  sendUpdateStatus('not-available', { message: '已是最新版本' });
-});
-
-autoUpdater.on('error', (err) => {
-  sendUpdateLog(formatErrorForLog(err), 'error');
-  sendUpdateStatus('error', { message: err.message || '检查更新失败' });
-});
+// 全局事件监听器已移除，改为在 checkForUpdatesWithTimeout 中按需添加
 
 autoUpdater.on('download-progress', (progressObj) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -286,6 +310,7 @@ autoUpdater.on('update-downloaded', (info) => {
 
 app.whenReady().then(() => {
   createWindow();
+  // 初始化代理拦截器（但不立即启用，只在直连失败时启用）
   setImmediate(doCheckForUpdates);
 });
 
@@ -324,13 +349,12 @@ ipcMain.handle('download-update', async () => {
       return { success: true };
     } catch (e1) {
       sendUpdateLog('更新: 直连下载失败，改用代理', 'info');
-      const https = require('https');
-      const orig = applyGhProxy(https);
+      applyGhProxy();
       try {
         await autoUpdater.downloadUpdate();
         return { success: true };
       } finally {
-        removeGhProxy(https, orig);
+        removeGhProxy();
       }
     }
   } catch (e) {

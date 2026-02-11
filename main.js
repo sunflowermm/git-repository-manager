@@ -115,7 +115,7 @@ autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
 
 const GH_PROXY_HOST = 'gh-proxy.com';
-const CHECK_TIMEOUT_MS = 12000;
+const CHECK_TIMEOUT_MS = 20000;
 
 function applyGhProxy(https) {
   const orig = https.request;
@@ -137,7 +137,6 @@ function removeGhProxy(https, orig) {
 
 function sendUpdateStatus(status, payload = {}) {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    sendUpdateLog(`更新: 发送状态 ${status}`, 'info');
     mainWindow.webContents.send('update-status', status, { ...payload });
   }
 }
@@ -157,18 +156,70 @@ function formatErrorForLog(err) {
   return `[错误] ${msg}\n${lines.join('\n')}`;
 }
 
-function runCheckWithTimeout() {
-  return Promise.race([
-    autoUpdater.checkForUpdates(),
-    new Promise((_, rej) => setTimeout(() => rej(new Error('检查更新超时，请检查网络')), CHECK_TIMEOUT_MS))
-  ]);
+function checkForUpdatesWithTimeout(useProxy = false) {
+  return new Promise((resolve, reject) => {
+    let timeoutId;
+    let resolved = false;
+    const cleanup = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      resolved = true;
+    };
+
+    const onUpdateAvailable = (info) => {
+      if (resolved) return;
+      cleanup();
+      autoUpdater.removeListener('update-available', onUpdateAvailable);
+      autoUpdater.removeListener('update-not-available', onUpdateNotAvailable);
+      autoUpdater.removeListener('error', onError);
+      resolve(info);
+    };
+
+    const onUpdateNotAvailable = () => {
+      if (resolved) return;
+      cleanup();
+      autoUpdater.removeListener('update-available', onUpdateAvailable);
+      autoUpdater.removeListener('update-not-available', onUpdateNotAvailable);
+      autoUpdater.removeListener('error', onError);
+      resolve(null);
+    };
+
+    const onError = (err) => {
+      if (resolved) return;
+      cleanup();
+      autoUpdater.removeListener('update-available', onUpdateAvailable);
+      autoUpdater.removeListener('update-not-available', onUpdateNotAvailable);
+      autoUpdater.removeListener('error', onError);
+      reject(err);
+    };
+
+    autoUpdater.once('update-available', onUpdateAvailable);
+    autoUpdater.once('update-not-available', onUpdateNotAvailable);
+    autoUpdater.once('error', onError);
+
+    timeoutId = setTimeout(() => {
+      if (resolved) return;
+      cleanup();
+      autoUpdater.removeListener('update-available', onUpdateAvailable);
+      autoUpdater.removeListener('update-not-available', onUpdateNotAvailable);
+      autoUpdater.removeListener('error', onError);
+      reject(new Error('检查更新超时，请检查网络'));
+    }, CHECK_TIMEOUT_MS);
+
+    autoUpdater.checkForUpdates().catch((err) => {
+      if (resolved) return;
+      cleanup();
+      autoUpdater.removeListener('update-available', onUpdateAvailable);
+      autoUpdater.removeListener('update-not-available', onUpdateNotAvailable);
+      autoUpdater.removeListener('error', onError);
+      reject(err);
+    });
+  });
 }
 
 async function performUpdateCheck() {
-  sendUpdateLog('更新: 直连检查中(12s 超时)', 'info');
+  sendUpdateLog('更新: 直连检查中(20s 超时)', 'info');
   try {
-    const result = await runCheckWithTimeout();
-    sendUpdateLog('更新: runCheckWithTimeout 已 resolve，等待 autoUpdater 事件', 'info');
+    const result = await checkForUpdatesWithTimeout(false);
     sendUpdateLog('更新: 直连检查完成', 'info');
     return result;
   } catch (e1) {
@@ -176,7 +227,7 @@ async function performUpdateCheck() {
     const https = require('https');
     const orig = applyGhProxy(https);
     try {
-      const result = await runCheckWithTimeout();
+      const result = await checkForUpdatesWithTimeout(true);
       sendUpdateLog('更新: 代理检查完成', 'info');
       return result;
     } finally {
@@ -187,7 +238,6 @@ async function performUpdateCheck() {
 
 function doCheckForUpdates() {
   if (!app.isPackaged || process.env.NODE_ENV === 'development') return;
-  sendUpdateLog('更新: 启动时自动检查', 'info');
   setImmediate(() => {
     performUpdateCheck().catch((err) => {
       sendUpdateLog(formatErrorForLog(err), 'error');
@@ -197,7 +247,6 @@ function doCheckForUpdates() {
 }
 
 autoUpdater.on('update-available', (info) => {
-  sendUpdateLog('更新: 事件 update-available', 'info');
   sendUpdateLog(`更新: 发现新版本 v${info.version}`, 'info');
   sendUpdateStatus('available', {
     message: `发现新版本 v${info.version}`,
@@ -207,28 +256,31 @@ autoUpdater.on('update-available', (info) => {
 });
 
 autoUpdater.on('update-not-available', () => {
-  sendUpdateLog('更新: 事件 update-not-available', 'info');
+  sendUpdateLog('更新: 已是最新版本', 'info');
   sendUpdateStatus('not-available', { message: '已是最新版本' });
 });
 
 autoUpdater.on('error', (err) => {
   sendUpdateLog(formatErrorForLog(err), 'error');
-  sendUpdateStatus('error', { message: err.message ? `更新检查失败: ${err.message}` : '检查更新失败' });
+  sendUpdateStatus('error', { message: err.message || '检查更新失败' });
 });
 
 autoUpdater.on('download-progress', (progressObj) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     const percent = Math.max(0, Math.min(100, progressObj.percent || 0));
+    const transferred = progressObj.transferred || 0;
+    const total = progressObj.total || 0;
+    sendUpdateLog(`更新: 下载进度 ${Math.round(percent)}% (${transferred}/${total})`, 'info');
     mainWindow.webContents.send('update-progress', {
       percent: Math.round(percent),
-      transferred: progressObj.transferred || 0,
-      total: progressObj.total || 0
+      transferred: transferred,
+      total: total
     });
   }
 });
 
 autoUpdater.on('update-downloaded', (info) => {
-  sendUpdateLog('更新: 事件 update-downloaded', 'info');
+  sendUpdateLog(`更新: 下载完成 v${info.version}`, 'info');
   sendUpdateStatus('downloaded', { message: '更新已下载完成', version: info.version });
 });
 
@@ -253,22 +305,22 @@ app.on('activate', () => {
 
 ipcMain.handle('check-for-updates', async () => {
   if (!app.isPackaged) return { success: true, skipped: true, reason: 'unpacked' };
-  sendUpdateLog('更新: IPC 收到检查请求', 'info');
-  setImmediate(() => {
-    performUpdateCheck().catch((err) => {
-      sendUpdateLog(formatErrorForLog(err), 'error');
-      sendUpdateStatus('error', { message: err.message || '检查更新失败' });
-    });
-  });
-  return { success: true };
+  sendUpdateLog('更新: 开始检查', 'info');
+  try {
+    await performUpdateCheck();
+    return { success: true };
+  } catch (err) {
+    sendUpdateLog(formatErrorForLog(err), 'error');
+    sendUpdateStatus('error', { message: err.message || '检查更新失败' });
+    return { success: false, error: err.message };
+  }
 });
 
 ipcMain.handle('download-update', async () => {
   try {
-    sendUpdateLog('更新: 下载中(直连)', 'info');
+    sendUpdateLog('更新: 开始下载(直连)', 'info');
     try {
       await autoUpdater.downloadUpdate();
-      sendUpdateLog('更新: 直连下载完成', 'info');
       return { success: true };
     } catch (e1) {
       sendUpdateLog('更新: 直连下载失败，改用代理', 'info');
@@ -276,7 +328,6 @@ ipcMain.handle('download-update', async () => {
       const orig = applyGhProxy(https);
       try {
         await autoUpdater.downloadUpdate();
-        sendUpdateLog('更新: 代理下载完成', 'info');
         return { success: true };
       } finally {
         removeGhProxy(https, orig);

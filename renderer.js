@@ -1887,15 +1887,6 @@ async function viewDiff() {
 
 let updateDownloading = false;
 let updateListenersSetup = false;
-const CHECK_WATCHDOG_MS = 15000;
-let updateCheckWatchdogTimer = null;
-
-function clearUpdateCheckWatchdog() {
-    if (updateCheckWatchdogTimer) {
-        clearTimeout(updateCheckWatchdogTimer);
-        updateCheckWatchdogTimer = null;
-    }
-}
 
 function setupUpdateListeners() {
     if (updateListenersSetup) return;
@@ -1914,7 +1905,6 @@ function handleUpdateStatus(data) {
     if (!data || typeof data !== 'object') return;
     const status = data.status;
     const { message, version, releaseNotes } = data;
-    clearUpdateCheckWatchdog();
     log(`更新: 收到状态 ${String(status ?? '(未知)')}`, 'info');
     if (status === undefined || status === null) {
         log(`更新: 调试 data.keys=${Object.keys(data).join(',')}`, 'info');
@@ -1947,7 +1937,6 @@ function handleUpdateProgress(progress) {
     let bar = document.getElementById('update-progress-bar');
     let text = document.getElementById('update-progress-text');
     if (!bar || !text) {
-        // 如果模态框未显示，尝试显示它（可能进度事件在模态框显示前到达）
         if (!document.getElementById('update-progress-bar')) {
             showUpdateProgressModal();
             bar = document.getElementById('update-progress-bar');
@@ -1957,12 +1946,15 @@ function handleUpdateProgress(progress) {
     }
 
     const pct = Math.max(0, Math.min(100, progress.percent || 0));
-    const transferred = progress.transferred || 0;
-    const total = progress.total || 0;
+    const transferred = Number(progress.transferred) || 0;
+    const total = Number(progress.total) || 0;
 
     bar.style.width = `${pct}%`;
+    
     if (total > 0) {
         text.textContent = `${pct}% (${formatBytes(transferred)}/${formatBytes(total)})`;
+    } else if (transferred > 0) {
+        text.textContent = `${pct}% (${formatBytes(transferred)})`;
     } else {
         text.textContent = `${pct}%`;
     }
@@ -1985,11 +1977,13 @@ function handleUpdateProgress(progress) {
 
 // 格式化字节数
 function formatBytes(bytes) {
-    if (bytes === 0) return '0 B';
+    const numBytes = Number(bytes) || 0;
+    if (numBytes === 0) return '0 B';
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+    const i = Math.floor(Math.log(numBytes) / Math.log(k));
+    const value = numBytes / Math.pow(k, i);
+    return (i === 0 ? Math.round(value) : Math.round(value * 100) / 100) + ' ' + sizes[i];
 }
 
 // 渲染 Markdown 为 HTML
@@ -2127,7 +2121,6 @@ async function clearUpdateCache() {
 }
 
 async function checkForUpdates() {
-    clearUpdateCheckWatchdog();
     log('正在检查更新...', 'info');
     try {
         const result = await ipcRenderer.invoke('check-for-updates');
@@ -2140,14 +2133,7 @@ async function checkForUpdates() {
             const msg = result.error || '检查更新失败';
             log(msg, 'error');
             showMessage(msg, 'error');
-            return;
         }
-        log('更新: 已发起检查，看门狗 15s', 'info');
-        updateCheckWatchdogTimer = setTimeout(() => {
-            updateCheckWatchdogTimer = null;
-            log('更新: 看门狗超时，未收到主进程结果', 'error');
-            showMessage('检查更新超时，请重试', 'error');
-        }, CHECK_WATCHDOG_MS);
     } catch (e) {
         const msg = e.message || '检查更新失败';
         log(msg, 'error');

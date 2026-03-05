@@ -1,61 +1,432 @@
+/**
+ * 多平台发布：按平台分别构建并发布到 GitHub / Gitee / GitCode
+ * 从哪安装则从哪更新：每个平台的安装包内嵌该平台的更新源。
+ * 需至少设置一个环境变量：GH_TOKEN / GITEE_TOKEN / GITCODE_TOKEN
+ */
 require('dotenv').config();
 const { spawn } = require('child_process');
-const { readFileSync, existsSync, readdirSync } = require('fs');
+const { readFileSync, existsSync, writeFileSync, readdirSync, unlinkSync } = require('fs');
 const path = require('path');
 const { Octokit } = require('@octokit/rest');
+const {
+  version,
+  getPlatformsWithToken,
+  getPublishConfig,
+  PLATFORMS
+} = require('./publish-config.js');
 
-if (!process.env.GH_TOKEN) {
-  console.error('❌ 错误：未找到 GH_TOKEN');
-  process.exit(1);
+const rootDir = __dirname;
+const historyDir = path.join(rootDir, 'history');
+const distDir = path.join(rootDir, 'dist');
+const tempBuilderConfigPath = path.join(rootDir, '.electron-builder.publish.json');
+let hasBuiltInstaller = false;
+
+function debug(...args) {
+  console.log('[publish:debug]', ...args);
 }
 
-const { version } = JSON.parse(readFileSync(path.join(__dirname, 'package.json'), 'utf-8'));
-console.log('✅ 已加载 GH_TOKEN');
-
-const historyDir = path.join(__dirname, 'history');
-let releaseNotes = '';
-const changelogPath = path.join(historyDir, `v${version}.md`);
-
-if (existsSync(changelogPath)) {
-  releaseNotes = readFileSync(changelogPath, 'utf-8');
-  console.log(`📝 已读取更新日志: v${version}.md\n`);
-}
-
-if (!releaseNotes) {
-  console.warn('⚠️  警告：未找到更新日志文件');
-}
-
-console.log(`📦 开始构建并发布 v${version}...\n`);
-
-spawn('npx', ['electron-builder', '--win', '--publish', 'always'], {
-  stdio: 'inherit',
-  shell: true,
-  env: { ...process.env, GH_TOKEN: process.env.GH_TOKEN }
-}).on('close', async (code) => {
-  if (code === 0) {
-    try {
-      const octokit = new Octokit({ auth: process.env.GH_TOKEN });
-      const { data: releases } = await octokit.repos.listReleases({
-        owner: 'sunflowermm',
-        repo: 'git-repository-manager',
-        per_page: 1
+async function resolveGiteeReleaseRef(platform, token) {
+  const base = `${platform.apiBase}/repos/${platform.owner}/${platform.repo}`;
+  const auth = `access_token=${encodeURIComponent(token)}`;
+  try {
+    const res = await fetch(`${base}?${auth}`);
+    if (!res.ok) {
+      debug('Gitee 仓库信息读取失败，使用配置分支', {
+        status: res.status,
+        ref: platform.releaseRef
       });
-      
-      if (releases.length > 0 && releases[0].tag_name === `v${version}`) {
-        await octokit.repos.updateRelease({
-          owner: 'sunflowermm',
-          repo: 'git-repository-manager',
-          release_id: releases[0].id,
-          name: `v${version}`,
-          body: releaseNotes || `## v${version}\n\n初始版本发布`
-        });
-        console.log('✅ 已更新 Release 标题和说明');
-      }
-    } catch (error) {
-      console.log('⚠️  更新 Release 失败:', error.message);
+      return platform.releaseRef;
     }
-    console.log('\n✅ 发布完成！');
-    console.log(`📦 访问：https://github.com/sunflowermm/git-repository-manager/releases`);
+    const repo = await res.json();
+    const ref = repo?.default_branch || platform.releaseRef;
+    debug('Gitee 默认分支', { defaultBranch: repo?.default_branch, useRef: ref });
+    return ref;
+  } catch (err) {
+    debug('Gitee 默认分支探测异常，使用配置分支', {
+      ref: platform.releaseRef,
+      message: err.message
+    });
+    return platform.releaseRef;
   }
-  process.exit(code);
+}
+
+async function resolveGitCodeReleaseRef(platform, token) {
+  const base = `${platform.apiBase}/repos/${platform.owner}/${platform.repo}`;
+  const headers = { 'PRIVATE-TOKEN': token };
+  try {
+    const res = await fetch(base, { headers });
+    if (!res.ok) {
+      debug('GitCode 仓库信息读取失败，使用配置分支', {
+        status: res.status,
+        ref: platform.releaseRef
+      });
+      return platform.releaseRef;
+    }
+    const repo = await res.json();
+    const ref = repo?.default_branch || platform.releaseRef;
+    debug('GitCode 默认分支', { defaultBranch: repo?.default_branch, useRef: ref });
+    return ref;
+  } catch (err) {
+    debug('GitCode 默认分支探测异常，使用配置分支', {
+      ref: platform.releaseRef,
+      message: err.message
+    });
+    return platform.releaseRef;
+  }
+}
+
+function getReleaseNotes() {
+  const p = path.join(historyDir, `v${version}.md`);
+  if (existsSync(p)) return readFileSync(p, 'utf-8');
+  return '';
+}
+
+function getDistArtifacts() {
+  if (!existsSync(distDir)) return [];
+  return readdirSync(distDir)
+    .filter((name) => name.endsWith('.exe') || name === 'latest.yml')
+    .map((name) => ({
+      name,
+      filePath: path.join(distDir, name)
+    }));
+}
+
+function createElectronBuilderConfig(platformKey) {
+  const publishConfig = getPublishConfig(platformKey);
+  if (!publishConfig) throw new Error(`未知平台: ${platformKey}`);
+  writeFileSync(
+    tempBuilderConfigPath,
+    JSON.stringify({ publish: publishConfig }, null, 2),
+    'utf-8'
+  );
+}
+
+function removeTempBuilderConfig() {
+  try {
+    if (existsSync(tempBuilderConfigPath)) unlinkSync(tempBuilderConfigPath);
+  } catch (e) {
+    // ignore
+  }
+}
+
+function runElectronBuilder(platformKey, doPublish) {
+  if (!doPublish && hasBuiltInstaller) {
+    debug('跳过重复构建，复用 dist 产物', { platformKey, doPublish });
+    return Promise.resolve();
+  }
+
+  createElectronBuilderConfig(platformKey);
+
+  return new Promise((resolve, reject) => {
+    const args = [
+      'electron-builder',
+      '--win',
+      '--config',
+      tempBuilderConfigPath,
+      '--publish',
+      doPublish ? 'always' : 'never'
+    ];
+
+    debug('开始执行 electron-builder', { platformKey, doPublish, args: args.join(' ') });
+
+    const env = { ...process.env };
+    const tokenKey = PLATFORMS[platformKey].envToken;
+    if (tokenKey && process.env[tokenKey]) env[tokenKey] = process.env[tokenKey];
+
+    let child;
+    if (process.platform === 'win32') {
+      child = spawn('cmd.exe', ['/d', '/s', '/c', 'npx', ...args], { stdio: 'inherit', env });
+    } else {
+      child = spawn('npx', args, { stdio: 'inherit', env });
+    }
+    child.on('close', (code) => {
+      removeTempBuilderConfig();
+      debug('electron-builder 执行结束', { platformKey, doPublish, code });
+      if (code === 0) {
+        hasBuiltInstaller = true;
+        resolve();
+      } else reject(new Error(`electron-builder 退出码: ${code}`));
+    });
+    child.on('error', (err) => {
+      removeTempBuilderConfig();
+      reject(err);
+    });
+  });
+}
+
+async function uploadByFormData(url, tokenField, token, file, headers = {}) {
+  const content = readFileSync(file.filePath);
+  const form = new FormData();
+  if (tokenField && token) form.append(tokenField, token);
+  form.append('file', new Blob([content]), file.name);
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: form
+  });
+
+  return res;
+}
+
+async function publishGitHub(platform, releaseNotes) {
+  debug('开始发布 GitHub');
+  await runElectronBuilder(platform.key, true);
+
+  const token = process.env[platform.envToken];
+  if (!token || !releaseNotes) return;
+
+  try {
+    const octokit = new Octokit({ auth: token });
+    const { data: releases } = await octokit.repos.listReleases({
+      owner: platform.publishConfig.owner,
+      repo: platform.publishConfig.repo,
+      per_page: 20
+    });
+
+    const release = releases.find((r) => r.tag_name === platform.releaseTag);
+    if (!release) return;
+
+    await octokit.repos.updateRelease({
+      owner: platform.publishConfig.owner,
+      repo: platform.publishConfig.repo,
+      release_id: release.id,
+      name: `v${version}`,
+      body: releaseNotes
+    });
+    console.log('✅ GitHub Release 说明已更新');
+  } catch (e) {
+    console.warn('⚠️ 更新 GitHub Release 说明失败:', e.message);
+  }
+}
+
+async function ensureGiteeRelease(platform, token, releaseNotes) {
+  const base = `${platform.apiBase}/repos/${platform.owner}/${platform.repo}`;
+  const auth = `access_token=${encodeURIComponent(token)}`;
+  const releaseRef = await resolveGiteeReleaseRef(platform, token);
+  debug('Gitee release 参数', {
+    repo: `${platform.owner}/${platform.repo}`,
+    tag: platform.releaseTag,
+    ref: releaseRef
+  });
+
+  const listRes = await fetch(`${base}/releases?${auth}&per_page=20`);
+  if (!listRes.ok) {
+    throw new Error(`获取 Gitee Release 列表失败: ${await listRes.text()}`);
+  }
+  const list = await listRes.json();
+  const existing = Array.isArray(list)
+    ? list.find((r) => r.tag_name === platform.releaseTag)
+    : null;
+  debug('Gitee release 查询结果', {
+    releaseCount: Array.isArray(list) ? list.length : 0,
+    existing: !!existing
+  });
+
+  if (existing) {
+    const updateRes = await fetch(`${base}/releases/${existing.id}?${auth}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: releaseNotes, name: `v${version}` })
+    });
+    if (!updateRes.ok) {
+      console.warn('⚠️ 更新 Gitee Release 说明失败:', await updateRes.text());
+    }
+    return existing.id;
+  }
+
+  const createPayload = {
+    tag_name: platform.releaseTag,
+    name: `v${version}`,
+    body: releaseNotes,
+    target_commitish: releaseRef
+  };
+
+  let createRes = await fetch(`${base}/releases?${auth}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(createPayload)
+  });
+
+  if (!createRes.ok) {
+    const errText = await createRes.text();
+    debug('Gitee release 创建失败', { errText });
+
+    // Gitee 要求 target_commitish 必填，失败时直接抛错，避免无效重试
+    throw new Error(`Gitee 创建 Release 失败: ${errText}`);
+  }
+
+  const created = await createRes.json();
+  return created.id;
+}
+
+async function publishGitee(platform, releaseNotes) {
+  debug('开始发布 Gitee');
+  await runElectronBuilder(platform.key, false);
+
+  const token = process.env[platform.envToken];
+  if (!token) {
+    throw new Error('缺少 GITEE_TOKEN');
+  }
+
+  const releaseId = await ensureGiteeRelease(platform, token, releaseNotes || `v${version}`);
+  const base = `${platform.apiBase}/repos/${platform.owner}/${platform.repo}`;
+  const attachUrl = `${base}/releases/${releaseId}/attach_files`;
+
+  for (const file of getDistArtifacts()) {
+    const res = await uploadByFormData(
+      `${attachUrl}`,
+      'access_token',
+      token,
+      file
+    );
+
+    if (res.ok) console.log('✅ Gitee 已上传:', file.name);
+    else console.warn('⚠️ Gitee 上传失败:', file.name, await res.text());
+  }
+}
+
+async function ensureGitCodeRelease(platform, token, releaseNotes) {
+  const base = `${platform.apiBase}/repos/${platform.owner}/${platform.repo}`;
+  const headers = {
+    'Content-Type': 'application/json',
+    'PRIVATE-TOKEN': token
+  };
+  const releaseRef = await resolveGitCodeReleaseRef(platform, token);
+  debug('GitCode release 参数', {
+    repo: `${platform.owner}/${platform.repo}`,
+    tag: platform.releaseTag,
+    ref: releaseRef
+  });
+
+  const listRes = await fetch(`${base}/releases?per_page=20`, { headers });
+  if (!listRes.ok) {
+    throw new Error(`获取 GitCode Release 列表失败: ${await listRes.text()}`);
+  }
+
+  const list = await listRes.json();
+  const existing = Array.isArray(list)
+    ? list.find((r) => r.tag_name === platform.releaseTag)
+    : null;
+  debug('GitCode release 查询结果', {
+    releaseCount: Array.isArray(list) ? list.length : 0,
+    existing: !!existing
+  });
+
+  if (existing) {
+    const updateRes = await fetch(`${base}/releases/${encodeURIComponent(platform.releaseTag)}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({
+        name: `v${version}`,
+        body: releaseNotes
+      })
+    });
+    if (!updateRes.ok) {
+      console.warn('⚠️ 更新 GitCode Release 说明失败:', await updateRes.text());
+    }
+    return;
+  }
+
+  const createRes = await fetch(`${base}/releases`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      tag_name: platform.releaseTag,
+      name: `v${version}`,
+      body: releaseNotes,
+      ref: releaseRef
+    })
+  });
+
+  if (!createRes.ok) {
+    const errText = await createRes.text();
+    debug('GitCode release 创建失败', { errText, ref: releaseRef });
+    throw new Error(`GitCode 创建 Release 失败: ${errText}`);
+  }
+}
+
+async function publishGitCode(platform, releaseNotes) {
+  debug('开始发布 GitCode');
+  await runElectronBuilder(platform.key, false);
+
+  const token = process.env[platform.envToken];
+  if (!token) {
+    throw new Error('缺少 GITCODE_TOKEN');
+  }
+
+  await ensureGitCodeRelease(platform, token, releaseNotes || `v${version}`);
+
+  const base = `${platform.apiBase}/repos/${platform.owner}/${platform.repo}`;
+  const headers = { 'PRIVATE-TOKEN': token };
+
+  const uploadUrlRes = await fetch(
+    `${base}/releases/${encodeURIComponent(platform.releaseTag)}/upload_url`,
+    { headers }
+  );
+
+  if (!uploadUrlRes.ok) {
+    throw new Error(`GitCode 获取上传地址失败: ${await uploadUrlRes.text()}`);
+  }
+
+  const { upload_url: uploadUrl } = await uploadUrlRes.json();
+  if (!uploadUrl) {
+    throw new Error('GitCode 未返回 upload_url');
+  }
+
+  for (const file of getDistArtifacts()) {
+    const res = await uploadByFormData(uploadUrl, '', '', file, headers);
+
+    if (res.ok) console.log('✅ GitCode 已上传:', file.name);
+    else console.warn('⚠️ GitCode 上传失败:', file.name, await res.text());
+  }
+}
+
+async function publishOnePlatform(platform, releaseNotes) {
+  if (platform.key === 'github') return publishGitHub(platform, releaseNotes);
+  if (platform.key === 'gitee') return publishGitee(platform, releaseNotes);
+  if (platform.key === 'gitcode') return publishGitCode(platform, releaseNotes);
+  throw new Error(`暂未实现的平台: ${platform.key}`);
+}
+
+async function main() {
+  const enabledPlatforms = getPlatformsWithToken();
+  if (enabledPlatforms.length === 0) {
+    console.error('❌ 未设置任何发布 Token。请设置 GH_TOKEN / GITEE_TOKEN / GITCODE_TOKEN 之一或多项。');
+    process.exit(1);
+  }
+
+  const releaseNotes = getReleaseNotes();
+  if (releaseNotes) console.log(`📝 更新日志: history/v${version}.md\n`);
+  else console.warn('⚠️ 未找到更新日志\n');
+
+  console.log(
+    `📦 开始构建并发布 v${version}，目标平台: ${enabledPlatforms
+      .map((p) => p.name)
+      .join(', ')}\n`
+  );
+
+  for (const platform of enabledPlatforms) {
+    console.log(`\n--- ${platform.name} ---`);
+    try {
+      await publishOnePlatform(platform, releaseNotes);
+    } catch (err) {
+      console.error(`${platform.name} 发布失败:`, err.message);
+      process.exitCode = 1;
+    }
+  }
+
+  removeTempBuilderConfig();
+
+  console.log('\n✅ 发布流程结束');
+  console.log('📦 发行版链接:');
+  for (const p of enabledPlatforms) {
+    if (p.releasesUrl) console.log(`   ${p.name}: ${p.releasesUrl}`);
+  }
+}
+
+main().catch((err) => {
+  removeTempBuilderConfig();
+  console.error(err);
+  process.exit(1);
 });

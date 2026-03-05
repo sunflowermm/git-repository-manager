@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, screen, session } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { exec, spawn } = require('child_process');
@@ -114,42 +114,7 @@ function createWindow() {
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
 
-const GH_PROXY_HOST = 'gh-proxy.com';
 const CHECK_TIMEOUT_MS = 30000;
-
-let proxyRemoveListener = null;
-
-function applyGhProxy() {
-  if (proxyRemoveListener) return;
-  
-  const defaultSession = session.defaultSession;
-  const proxyHandler = (details, callback) => {
-    const originalUrl = details.url;
-    if (originalUrl.includes('github.com') || originalUrl.includes('githubusercontent.com')) {
-      const proxyUrl = `https://${GH_PROXY_HOST}/${originalUrl}`;
-      sendUpdateLog(`更新: 代理请求 ${originalUrl} -> ${proxyUrl}`, 'info');
-      callback({ redirectURL: proxyUrl });
-    } else {
-      callback({});
-    }
-  };
-  
-  proxyRemoveListener = defaultSession.webRequest.onBeforeRequest(
-    { urls: ['https://github.com/*', 'https://*.github.com/*', 'https://*.githubusercontent.com/*'] },
-    proxyHandler
-  );
-}
-
-function removeGhProxy() {
-  if (proxyRemoveListener) {
-    try {
-      proxyRemoveListener();
-      proxyRemoveListener = null;
-    } catch (e) {
-      proxyRemoveListener = null;
-    }
-  }
-}
 
 function sendUpdateStatus(status, payload = {}) {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -259,22 +224,9 @@ function checkForUpdatesWithTimeout() {
 }
 
 async function performUpdateCheck() {
-  sendUpdateLog('更新: 直连检查中', 'info');
-  try {
-    await checkForUpdatesWithTimeout();
-    sendUpdateLog('更新: 直连检查完成', 'info');
-  } catch (e1) {
-    sendUpdateLog(`更新: 直连失败，改用代理重试 (${e1.message || ''})`, 'info');
-    applyGhProxy();
-    // 等待一小段时间确保代理拦截器已生效
-    await new Promise(resolve => setTimeout(resolve, 100));
-    try {
-      await checkForUpdatesWithTimeout();
-      sendUpdateLog('更新: 代理检查完成', 'info');
-    } finally {
-      removeGhProxy();
-    }
-  }
+  sendUpdateLog('更新: 检查中', 'info');
+  await checkForUpdatesWithTimeout();
+  sendUpdateLog('更新: 检查完成', 'info');
 }
 
 function doCheckForUpdates() {
@@ -343,20 +295,9 @@ ipcMain.handle('check-for-updates', async () => {
 
 ipcMain.handle('download-update', async () => {
   try {
-    sendUpdateLog('更新: 开始下载(直连)', 'info');
-    try {
-      await autoUpdater.downloadUpdate();
-      return { success: true };
-    } catch (e1) {
-      sendUpdateLog('更新: 直连下载失败，改用代理', 'info');
-      applyGhProxy();
-      try {
-        await autoUpdater.downloadUpdate();
-        return { success: true };
-      } finally {
-        removeGhProxy();
-      }
-    }
+    sendUpdateLog('更新: 开始下载', 'info');
+    await autoUpdater.downloadUpdate();
+    return { success: true };
   } catch (e) {
     sendUpdateLog(formatErrorForLog(e), 'error');
     return { success: false, error: e.message };
@@ -574,14 +515,10 @@ ipcMain.handle('get-repos', async (event, repoPaths) => {
   return repos;
 });
 
-// 检测平台（支持 gh-proxy.com / ghproxy 等代理 URL）
+// 检测平台
 function detectPlatform(url) {
   if (!url) return '未知';
   const urlLower = url.toLowerCase();
-  // 代理拉取的 URL 形如 https://gh-proxy.com/https://github.com/xxx/repo.git，整段包含 github
-  if (urlLower.includes('gh-proxy.com') || urlLower.includes('ghproxy.net') || urlLower.includes('ghproxy.com')) {
-    return 'GitHub';
-  }
   if (urlLower.includes('github.com') || urlLower.includes('github.io')) {
     return 'GitHub';
   }
@@ -1031,16 +968,6 @@ function processRemoteUrl(url, platform, config) {
       const repoPath = urlMatch[2];
       const username = config.username || 'token';
       url = `https://${username}:${config.password}@${host}/${repoPath}`;
-    }
-  }
-  
-  // 代理处理（gh-proxy.com等）
-  if (config.use_proxy && config.proxy_url && url.startsWith('https://')) {
-    const proxy = config.proxy_url;
-    if (proxy.includes('gh-proxy.com') || proxy.includes('ghproxy')) {
-      if (!url.startsWith(proxy)) {
-        url = `${proxy.replace(/\/$/, '')}/${url}`;
-      }
     }
   }
   

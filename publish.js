@@ -69,6 +69,16 @@ function createElectronBuilderConfig(platformKey) {
       win: {
         icon: 'assets/icon.ico'
       },
+      nsis: {
+        oneClick: false,
+        allowToChangeInstallationDirectory: true,
+        createDesktopShortcut: true,
+        createStartMenuShortcut: true,
+        uninstallDisplayName: '向日葵Git仓库管理',
+        installerIcon: 'assets/icon.ico',
+        uninstallerIcon: 'assets/icon.ico',
+        installerHeaderIcon: 'assets/icon.ico'
+      },
       publish: publishConfig
     }, null, 2),
     'utf-8'

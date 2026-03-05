@@ -25,55 +25,6 @@ function debug(...args) {
   console.log('[publish:debug]', ...args);
 }
 
-async function resolveGiteeReleaseRef(platform, token) {
-  const base = `${platform.apiBase}/repos/${platform.owner}/${platform.repo}`;
-  const auth = `access_token=${encodeURIComponent(token)}`;
-  try {
-    const res = await fetch(`${base}?${auth}`);
-    if (!res.ok) {
-      debug('Gitee 仓库信息读取失败，使用配置分支', {
-        status: res.status,
-        ref: platform.releaseRef
-      });
-      return platform.releaseRef;
-    }
-    const repo = await res.json();
-    const ref = repo?.default_branch || platform.releaseRef;
-    debug('Gitee 默认分支', { defaultBranch: repo?.default_branch, useRef: ref });
-    return ref;
-  } catch (err) {
-    debug('Gitee 默认分支探测异常，使用配置分支', {
-      ref: platform.releaseRef,
-      message: err.message
-    });
-    return platform.releaseRef;
-  }
-}
-
-async function resolveGitCodeReleaseRef(platform, token) {
-  const base = `${platform.apiBase}/repos/${platform.owner}/${platform.repo}`;
-  const headers = { 'PRIVATE-TOKEN': token };
-  try {
-    const res = await fetch(base, { headers });
-    if (!res.ok) {
-      debug('GitCode 仓库信息读取失败，使用配置分支', {
-        status: res.status,
-        ref: platform.releaseRef
-      });
-      return platform.releaseRef;
-    }
-    const repo = await res.json();
-    const ref = repo?.default_branch || platform.releaseRef;
-    debug('GitCode 默认分支', { defaultBranch: repo?.default_branch, useRef: ref });
-    return ref;
-  } catch (err) {
-    debug('GitCode 默认分支探测异常，使用配置分支', {
-      ref: platform.releaseRef,
-      message: err.message
-    });
-    return platform.releaseRef;
-  }
-}
 
 function getReleaseNotes() {
   const p = path.join(historyDir, `v${version}.md`);
@@ -84,7 +35,10 @@ function getReleaseNotes() {
 function getDistArtifacts() {
   if (!existsSync(distDir)) return [];
   return readdirSync(distDir)
-    .filter((name) => name.endsWith('.exe') || name === 'latest.yml')
+    .filter(
+      (name) =>
+        (name.endsWith('.exe') && name.includes(version)) || name === 'latest.yml'
+    )
     .map((name) => ({
       name,
       filePath: path.join(distDir, name)
@@ -96,7 +50,12 @@ function createElectronBuilderConfig(platformKey) {
   if (!publishConfig) throw new Error(`未知平台: ${platformKey}`);
   writeFileSync(
     tempBuilderConfigPath,
-    JSON.stringify({ publish: publishConfig }, null, 2),
+    JSON.stringify({
+      publish: publishConfig,
+      win: {
+        icon: 'assets/icon.ico'
+      }
+    }, null, 2),
     'utf-8'
   );
 }
@@ -159,10 +118,16 @@ async function uploadByFormData(url, tokenField, token, file, headers = {}) {
   const form = new FormData();
   if (tokenField && token) form.append(tokenField, token);
   form.append('file', new Blob([content]), file.name);
+  form.append('file_name', file.name);
 
   const res = await fetch(url, {
     method: 'POST',
-    headers,
+    headers: Object.keys(headers).reduce((acc, key) => {
+      if (key.toLowerCase() !== 'content-type') {
+        acc[key] = headers[key];
+      }
+      return acc;
+    }, {}),
     body: form
   });
 
@@ -203,7 +168,8 @@ async function publishGitHub(platform, releaseNotes) {
 async function ensureGiteeRelease(platform, token, releaseNotes) {
   const base = `${platform.apiBase}/repos/${platform.owner}/${platform.repo}`;
   const auth = `access_token=${encodeURIComponent(token)}`;
-  const releaseRef = await resolveGiteeReleaseRef(platform, token);
+  // Gitee 固定使用 master 作为发布分支
+  const releaseRef = 'master';
   debug('Gitee release 参数', {
     repo: `${platform.owner}/${platform.repo}`,
     tag: platform.releaseTag,
@@ -227,7 +193,11 @@ async function ensureGiteeRelease(platform, token, releaseNotes) {
     const updateRes = await fetch(`${base}/releases/${existing.id}?${auth}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ body: releaseNotes, name: `v${version}` })
+      body: JSON.stringify({ 
+        tag_name: platform.releaseTag,
+        body: releaseNotes, 
+        name: `v${version}` 
+      })
     });
     if (!updateRes.ok) {
       console.warn('⚠️ 更新 Gitee Release 说明失败:', await updateRes.text());
@@ -292,7 +262,7 @@ async function ensureGitCodeRelease(platform, token, releaseNotes) {
     'Content-Type': 'application/json',
     'PRIVATE-TOKEN': token
   };
-  const releaseRef = await resolveGitCodeReleaseRef(platform, token);
+  const releaseRef = platform.releaseRef;
   debug('GitCode release 参数', {
     repo: `${platform.owner}/${platform.repo}`,
     tag: platform.releaseTag,
@@ -360,25 +330,39 @@ async function publishGitCode(platform, releaseNotes) {
   const base = `${platform.apiBase}/repos/${platform.owner}/${platform.repo}`;
   const headers = { 'PRIVATE-TOKEN': token };
 
-  const uploadUrlRes = await fetch(
-    `${base}/releases/${encodeURIComponent(platform.releaseTag)}/upload_url`,
-    { headers }
-  );
+  try {
+    for (const file of getDistArtifacts()) {
+      try {
+        const uploadUrlRes = await fetch(
+          `${base}/releases/${encodeURIComponent(platform.releaseTag)}/upload_url?file_name=${encodeURIComponent(file.name)}`,
+          { headers }
+        );
 
-  if (!uploadUrlRes.ok) {
-    throw new Error(`GitCode 获取上传地址失败: ${await uploadUrlRes.text()}`);
-  }
+        if (!uploadUrlRes.ok) {
+          throw new Error(`GitCode 获取上传地址失败: ${await uploadUrlRes.text()}`);
+        }
 
-  const { upload_url: uploadUrl } = await uploadUrlRes.json();
-  if (!uploadUrl) {
-    throw new Error('GitCode 未返回 upload_url');
-  }
+        const response = await uploadUrlRes.json();
+        debug('GitCode upload_url response', response);
+        const uploadUrl = response.url;
+        if (!uploadUrl) {
+          throw new Error(`GitCode 未返回 url，响应: ${JSON.stringify(response)}`);
+        }
 
-  for (const file of getDistArtifacts()) {
-    const res = await uploadByFormData(uploadUrl, '', '', file, headers);
+        const res = await fetch(uploadUrl, {
+          method: 'PUT',
+          headers: response.headers,
+          body: readFileSync(file.filePath)
+        });
 
-    if (res.ok) console.log('✅ GitCode 已上传:', file.name);
-    else console.warn('⚠️ GitCode 上传失败:', file.name, await res.text());
+        if (res.ok) console.log('✅ GitCode 已上传:', file.name);
+        else console.warn('⚠️ GitCode 上传失败:', file.name, await res.text());
+      } catch (error) {
+        console.warn('⚠️ GitCode 上传失败:', file.name, error.message);
+      }
+    }
+  } catch (error) {
+    console.warn('⚠️ GitCode 发布失败:', error.message);
   }
 }
 

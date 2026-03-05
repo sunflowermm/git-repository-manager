@@ -224,7 +224,6 @@ async function removeRepoFromList(repoPath, e) {
     log('已从列表移除仓库', 'info');
 }
 
-// 刷新仓库列表
 async function refreshRepoList(silent = false) {
     if (state.isRefreshing) return;
     
@@ -247,17 +246,7 @@ async function refreshRepoList(silent = false) {
         }
         
         renderRepoList();
-        
-        if (state.currentRepo) {
-            try {
-                const repoInfo = await ipcRenderer.invoke('get-repo-info', state.currentRepo.path);
-                updateRepoStatus(state.currentRepo.path, repoInfo);
-                updateRepoInfo(repoInfo);
-            } catch (error) {
-                // 静默处理
-            }
-        }
-        
+        await updateCurrentRepoInfo(true);
         if (!silent) log(`已加载 ${state.repos.length} 个仓库`, 'success');
     } catch (error) {
         if (!silent) log(`刷新失败: ${error.message}`, 'error');
@@ -482,21 +471,23 @@ function updateRepoStatus(repoPath, repoInfo) {
     }
 }
 
-// 选择仓库
+async function updateCurrentRepoInfo(silent = false) {
+    if (!state.currentRepo) return;
+    try {
+        const repoInfo = await ipcRenderer.invoke('get-repo-info', state.currentRepo.path);
+        updateRepoStatus(state.currentRepo.path, repoInfo);
+        updateRepoInfo(repoInfo);
+    } catch (error) {
+        if (!silent) log(`获取仓库信息失败: ${error.message}`, 'error');
+    }
+}
+
 async function selectRepo(repo) {
     const latestRepo = state.repos.find(r => r.path === repo.path) || repo;
     state.currentRepo = latestRepo;
     renderRepoList();
-    
     log(`已选择仓库: ${latestRepo.name}`, 'info');
-    
-    try {
-        const repoInfo = await ipcRenderer.invoke('get-repo-info', latestRepo.path);
-        updateRepoStatus(latestRepo.path, repoInfo);
-        updateRepoInfo(repoInfo);
-    } catch (error) {
-        log(`获取仓库信息失败: ${error.message}`, 'error');
-    }
+    await updateCurrentRepoInfo();
 }
 
 // 更新仓库信息显示
@@ -632,7 +623,6 @@ async function executeCommit(repoPath, message, config) {
     return commitResult;
 }
 
-// 刷新当前仓库信息
 async function refreshCurrentRepo() {
     await refreshRepoList();
     if (state.currentRepo) {
@@ -640,14 +630,7 @@ async function refreshCurrentRepo() {
         if (updatedRepo) {
             state.currentRepo = updatedRepo;
             renderRepoList();
-            // 更新仓库详细信息
-            try {
-                const repoInfo = await ipcRenderer.invoke('get-repo-info', state.currentRepo.path);
-                updateRepoStatus(state.currentRepo.path, repoInfo);
-                updateRepoInfo(repoInfo);
-            } catch (error) {
-                // 静默处理
-            }
+            await updateCurrentRepoInfo(true);
         }
     }
 }
@@ -710,78 +693,68 @@ async function commitAndPush() {
     }
 }
 
-// 拉取变更
-async function pullChanges() {
-    if (!checkRepoSelected()) return;
-    
-    log('开始拉取...', 'info');
+async function withErrorHandling(fn, successMsg, errorMsg, onSuccess = null) {
     try {
-        const config = getCurrentRepoConfig();
-        const result = await ipcRenderer.invoke('git-pull', state.currentRepo.path, 'origin', null, config);
-        if (result.success) {
-            log('拉取成功', 'success');
-            showMessage('拉取成功！', 'success');
-            await refreshCurrentRepo();
-        } else {
-            throw new Error(result.error);
+        const result = await fn();
+        if (result.success === false) throw new Error(result.error);
+        if (successMsg) {
+            log(successMsg, 'success');
+            showMessage(successMsg, 'success');
         }
+        if (onSuccess) await onSuccess();
+        return result;
     } catch (error) {
-        log(`拉取失败: ${error.message}`, 'error');
-        showMessage(`拉取失败: ${error.message}`, 'error');
+        const msg = errorMsg ? `${errorMsg}: ${error.message}` : error.message;
+        log(msg, 'error');
+        showMessage(msg, 'error');
+        return null;
     }
 }
 
-// 推送变更
+async function pullChanges() {
+    if (!checkRepoSelected()) return;
+    log('开始拉取...', 'info');
+    const config = getCurrentRepoConfig();
+    await withErrorHandling(
+        () => ipcRenderer.invoke('git-pull', state.currentRepo.path, 'origin', null, config),
+        '拉取成功！',
+        '拉取失败',
+        refreshCurrentRepo
+    );
+}
+
 async function pushChanges() {
     if (!checkRepoSelected()) return;
-    
     log('开始推送...', 'info');
-    try {
-        const config = getCurrentRepoConfig();
-        const result = await ipcRenderer.invoke('git-push', state.currentRepo.path, 'origin', null, config);
-        if (result.success) {
-            log('推送成功', 'success');
-            showMessage('推送成功！', 'success');
-        } else {
-            throw new Error(result.error);
-        }
-    } catch (error) {
-        log(`推送失败: ${error.message}`, 'error');
-        showMessage(`推送失败: ${error.message}`, 'error');
-    }
+    const config = getCurrentRepoConfig();
+    await withErrorHandling(
+        () => ipcRenderer.invoke('git-push', state.currentRepo.path, 'origin', null, config),
+        '推送成功！',
+        '推送失败'
+    );
 }
 
 async function stashChanges() {
     if (!checkRepoSelected()) return;
     const msg = (await showInputModal('暂存变更', '暂存说明（可选）:', '', '可选：输入暂存说明')) || '';
     log('正在暂存变更...', 'info');
-    try {
-        const result = await ipcRenderer.invoke('git-stash', state.currentRepo.path, msg);
-        if (result.success) {
-            log('暂存成功', 'success');
-            showMessage('暂存成功', 'success');
-            await refreshCurrentRepo();
-        } else throw new Error(result.error);
-    } catch (error) {
-        log(`暂存失败: ${error.message}`, 'error');
-        showMessage(`暂存失败: ${error.message}`, 'error');
-    }
+    await withErrorHandling(
+        () => ipcRenderer.invoke('git-stash', state.currentRepo.path, msg),
+        '暂存成功',
+        '暂存失败',
+        refreshCurrentRepo
+    );
 }
 
 async function stashPop() {
     if (!checkRepoSelected()) return;
     log('正在恢复暂存...', 'info');
-    try {
-        const result = await ipcRenderer.invoke('git-stash-pop', state.currentRepo.path);
-        if (result.success) {
-            log('恢复暂存成功', 'success');
-            showMessage('恢复暂存成功', 'success');
-            await refreshCurrentRepo();
-        } else throw new Error(result.error);
-    } catch (error) {
-        log(`恢复暂存失败: ${error.message}`, 'error');
-        showMessage(`恢复暂存失败: ${error.message}`, 'error');
-    }
+    await withErrorHandling(
+        () => ipcRenderer.invoke('git-stash-pop', state.currentRepo.path),
+        '恢复暂存成功',
+        '恢复暂存失败',
+        refreshCurrentRepo
+    );
 }
 
 // 提交并同步
@@ -789,13 +762,8 @@ async function commitAndSync() {
     if (!checkRepoSelected()) return;
     
     const role = getRepoRole(state.currentRepo.name);
-    if (role !== 'main') {
-        await commitAndPush();
-        return;
-    }
-    
-    const subordinates = getSubordinates(state.currentRepo.name);
-    if (subordinates.length === 0) {
+    const subordinates = role === 'main' ? getSubordinates(state.currentRepo.name) : [];
+    if (role !== 'main' || subordinates.length === 0) {
         await commitAndPush();
         return;
     }
@@ -1772,23 +1740,13 @@ function toggleTheme() {
     showMessage(`已切换到${state.theme === 'light' ? '白天' : '夜晚'}模式`, 'success');
 }
 
-// 刷新文件变更
 async function refreshChanges() {
     if (!checkRepoSelected()) return;
-    
-    try {
-        const repoInfo = await ipcRenderer.invoke('get-repo-info', state.currentRepo.path);
-        if (repoInfo.status) {
-            renderChanges(repoInfo.status);
-            log('文件变更已刷新', 'success');
-        }
-    } catch (error) {
-        log(`刷新失败: ${error.message}`, 'error');
-    }
+    await updateCurrentRepoInfo();
+    log('文件变更已刷新', 'success');
 }
 
 
-// 创建分支
 async function createBranch() {
     if (!checkRepoSelected()) return;
     
@@ -1796,27 +1754,21 @@ async function createBranch() {
     if (!branchName || !branchName.trim()) return;
     
     log(`创建分支: ${branchName}`, 'info');
-    try {
-        const result = await ipcRenderer.invoke('exec-git', state.currentRepo.path, 'checkout', ['-b', branchName.trim()]);
-        if (result.success) {
-            log(`分支 ${branchName} 创建成功`, 'success');
-            showMessage('分支创建成功！', 'success');
-            await refreshCurrentRepo();
-        } else {
-            throw new Error(result.stderr || result.error || '创建分支失败');
-        }
-    } catch (error) {
-        log(`创建分支失败: ${error.message}`, 'error');
-        showMessage(`创建分支失败: ${error.message}`, 'error');
+    const result = await ipcRenderer.invoke('exec-git', state.currentRepo.path, 'checkout', ['-b', branchName.trim()]);
+    if (result.success) {
+        log(`分支 ${branchName} 创建成功`, 'success');
+        showMessage('分支创建成功！', 'success');
+        await refreshCurrentRepo();
+    } else {
+        log(`创建分支失败: ${result.stderr || result.error || '创建分支失败'}`, 'error');
+        showMessage(`创建分支失败: ${result.stderr || result.error || '创建分支失败'}`, 'error');
     }
 }
 
-// 切换分支
 async function switchBranch() {
     if (!checkRepoSelected()) return;
     
     try {
-        // 获取当前分支和所有分支
         const branchResult = await ipcRenderer.invoke('exec-git', state.currentRepo.path, 'branch', []);
         if (!branchResult.success) {
             throw new Error(branchResult.stderr || branchResult.error || '获取分支列表失败');
@@ -1845,41 +1797,31 @@ async function switchBranch() {
     }
 }
 
-// 查看日志
 async function viewLog() {
     if (!checkRepoSelected()) return;
     
     log('获取提交日志...', 'info');
-    try {
-        const result = await ipcRenderer.invoke('exec-git', state.currentRepo.path, 'log', ['--oneline', '--graph', '--decorate', '-20']);
-        if (result.success) {
-            const logContent = result.stdout || '暂无提交记录';
-            showModal('提交日志', `<pre style="font-family: Consolas, monospace; font-size: 12px; white-space: pre-wrap; max-height: 400px; overflow-y: auto;">${logContent}</pre>`, null, false);
-        } else {
-            throw new Error(result.stderr || result.error || '获取日志失败');
-        }
-    } catch (error) {
-        log(`查看日志失败: ${error.message}`, 'error');
-        showMessage(`查看日志失败: ${error.message}`, 'error');
+    const result = await ipcRenderer.invoke('exec-git', state.currentRepo.path, 'log', ['--oneline', '--graph', '--decorate', '-20']);
+    if (result.success) {
+        const logContent = result.stdout || '暂无提交记录';
+        showModal('提交日志', `<pre style="font-family: Consolas, monospace; font-size: 12px; white-space: pre-wrap; max-height: 400px; overflow-y: auto;">${logContent}</pre>`, null, false);
+    } else {
+        log(`查看日志失败: ${result.stderr || result.error || '获取日志失败'}`, 'error');
+        showMessage(`查看日志失败: ${result.stderr || result.error || '获取日志失败'}`, 'error');
     }
 }
 
-// 查看差异
 async function viewDiff() {
     if (!checkRepoSelected()) return;
     
     log('获取文件差异...', 'info');
-    try {
-        const result = await ipcRenderer.invoke('exec-git', state.currentRepo.path, 'diff', []);
-        if (result.success) {
-            const diffContent = result.stdout || '暂无差异';
-            showModal('文件差异', `<pre style="font-family: Consolas, monospace; font-size: 12px; white-space: pre-wrap; max-height: 400px; overflow-y: auto;">${diffContent}</pre>`, null, false);
-        } else {
-            throw new Error(result.stderr || result.error || '获取差异失败');
-        }
-    } catch (error) {
-        log(`查看差异失败: ${error.message}`, 'error');
-        showMessage(`查看差异失败: ${error.message}`, 'error');
+    const result = await ipcRenderer.invoke('exec-git', state.currentRepo.path, 'diff', []);
+    if (result.success) {
+        const diffContent = result.stdout || '暂无差异';
+        showModal('文件差异', `<pre style="font-family: Consolas, monospace; font-size: 12px; white-space: pre-wrap; max-height: 400px; overflow-y: auto;">${diffContent}</pre>`, null, false);
+    } else {
+        log(`查看差异失败: ${result.stderr || result.error || '获取差异失败'}`, 'error');
+        showMessage(`查看差异失败: ${result.stderr || result.error || '获取差异失败'}`, 'error');
     }
 }
 

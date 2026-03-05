@@ -110,7 +110,6 @@ function createWindow() {
   mainWindow.loadFile('index.html');
 }
 
-// 配置自动更新
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
 
@@ -278,8 +277,6 @@ app.on('activate', () => {
   }
 });
 
-// ========== IPC 处理程序 ==========
-
 ipcMain.handle('check-for-updates', async () => {
   if (!app.isPackaged) return { success: true, skipped: true, reason: 'unpacked' };
   sendUpdateLog('更新: 开始检查', 'info');
@@ -333,7 +330,6 @@ function clearUpdateCache() {
 
 ipcMain.handle('clear-update-cache', () => clearUpdateCache());
 
-// 选择文件夹
 ipcMain.handle('select-folder', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory']
@@ -341,14 +337,12 @@ ipcMain.handle('select-folder', async () => {
   return result.canceled ? null : result.filePaths[0];
 });
 
-// 用户 .ssh 目录（密钥默认所在文件夹）
 function getSshDir() {
   return path.join(app.getPath('home'), '.ssh');
 }
 
 ipcMain.handle('get-ssh-dir', async () => getSshDir());
 
-// 自动检测默认私钥（id_ed25519 / id_rsa）
 ipcMain.handle('detect-default-ssh-key', async () => {
   const dir = getSshDir();
   if (!fs.existsSync(dir)) return null;
@@ -359,7 +353,6 @@ ipcMain.handle('detect-default-ssh-key', async () => {
   return null;
 });
 
-// 选择文件（defaultPath 如传入则对话框直接打开该目录，用于密钥时传 .ssh）
 ipcMain.handle('select-file', async (event, defaultPath) => {
   const result = await dialog.showOpenDialog(mainWindow, {
     defaultPath: defaultPath || app.getPath('documents'),
@@ -369,7 +362,6 @@ ipcMain.handle('select-file', async (event, defaultPath) => {
   return result.canceled ? null : result.filePaths[0];
 });
 
-// 窗口控制
 ipcMain.handle('window-minimize', () => {
   if (mainWindow) mainWindow.minimize();
 });
@@ -392,7 +384,6 @@ ipcMain.handle('window-is-maximized', () => {
   return mainWindow ? mainWindow.isMaximized() : false;
 });
 
-// 打开文件夹
 ipcMain.handle('open-folder', async (event, folderPath) => {
   const platform = process.platform;
   let command;
@@ -405,16 +396,13 @@ ipcMain.handle('open-folder', async (event, folderPath) => {
     command = `xdg-open "${folderPath}"`;
   }
   
-  exec(command, () => {
-    // 静默处理错误
-  });
+  exec(command, () => {});
 });
 
 function getConfigPath() {
   return path.join(getDataDir(), 'config.json');
 }
 
-// 读取配置文件
 ipcMain.handle('load-config', async () => {
   const configPath = getConfigPath();
   try {
@@ -422,13 +410,10 @@ ipcMain.handle('load-config', async () => {
       const data = fs.readFileSync(configPath, 'utf-8');
       return JSON.parse(data);
     }
-  } catch (error) {
-    // 静默处理错误
-  }
+  } catch (error) {}
   return null;
 });
 
-// 保存配置文件
 ipcMain.handle('save-config', async (event, config) => {
   const configPath = getConfigPath();
   const configDir = path.dirname(configPath);
@@ -440,12 +425,10 @@ ipcMain.handle('save-config', async (event, config) => {
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
     return true;
   } catch (error) {
-    // 静默处理错误
     return false;
   }
 });
 
-// simple-git getRemotes(true) 返回数组 [{ name, refs: { fetch, push } }]，取第一个 URL
 function getFirstRemoteUrl(remotes) {
   if (!remotes) return '';
   const first = Array.isArray(remotes) ? remotes[0] : remotes[Object.keys(remotes)[0]];
@@ -454,7 +437,25 @@ function getFirstRemoteUrl(remotes) {
   return (r.fetch || r.push || '').trim();
 }
 
-// 获取仓库列表
+async function getRepoBasicInfo(git) {
+  let remoteUrl = '';
+  let branch = '无分支';
+  let status = { modified: [], staged: [], untracked: [], files: [] };
+  
+  try { remoteUrl = getFirstRemoteUrl(await git.getRemotes(true)); } catch (e) {}
+  try { const b = await git.branchLocal(); branch = b.current || branch; } catch (e) {}
+  try { status = await git.status(); } catch (e) {}
+  
+  return {
+    remoteUrl,
+    branch,
+    modified: (status.modified || []).length,
+    staged: (status.staged || []).length,
+    untracked: (status.untracked || []).length,
+    files: status.files || []
+  };
+}
+
 ipcMain.handle('get-repos', async (event, repoPaths) => {
   if (!Array.isArray(repoPaths) || repoPaths.length === 0) return [];
 
@@ -465,38 +466,21 @@ ipcMain.handle('get-repos', async (event, repoPaths) => {
     if (!fs.existsSync(gitPath) || !fs.statSync(repoPath).isDirectory()) continue;
 
     const name = path.basename(repoPath);
-    let remoteUrl = '';
-    let currentBranch = '无分支';
-    let status = { files: [], modified: [], staged: [], untracked: [] };
     
     try {
       const git = simpleGit(repoPath);
-      try {
-        remoteUrl = getFirstRemoteUrl(await git.getRemotes(true));
-      } catch (e) {}
-      try {
-        const branches = await git.branchLocal();
-        currentBranch = branches.current || currentBranch;
-      } catch (e) {}
-      try {
-        status = await git.status();
-      } catch (e) {}
-      
-      const files = status.files || [];
-      const modified = status.modified || [];
-      const staged = status.staged || [];
-      const untracked = status.untracked || [];
+      const info = await getRepoBasicInfo(git);
       
       repos.push({
         name,
         path: repoPath,
-        branch: currentBranch,
-        remoteUrl,
-        platform: detectPlatform(remoteUrl),
-        hasChanges: files.length > 0,
-        modified: modified.length,
-        staged: staged.length,
-        untracked: untracked.length
+        branch: info.branch,
+        remoteUrl: info.remoteUrl,
+        platform: detectPlatform(info.remoteUrl),
+        hasChanges: info.files.length > 0,
+        modified: info.modified,
+        staged: info.staged,
+        untracked: info.untracked
       });
     } catch (error) {
       repos.push({
@@ -515,20 +499,16 @@ ipcMain.handle('get-repos', async (event, repoPaths) => {
   return repos;
 });
 
-// 检测平台
 function detectPlatform(url) {
   if (!url) return '未知';
   const urlLower = url.toLowerCase();
-  if (urlLower.includes('github.com') || urlLower.includes('github.io')) {
-    return 'GitHub';
-  }
+  if (urlLower.includes('github.com') || urlLower.includes('github.io')) return 'GitHub';
   if (urlLower.includes('gitee.com')) return 'Gitee';
   if (urlLower.includes('gitcode.net') || urlLower.includes('gitcode.com')) return 'GitCode';
   if (urlLower.includes('gitlab.com') || urlLower.includes('gitlab.io')) return 'GitLab';
   return '其他';
 }
 
-// 获取仓库详细信息
 ipcMain.handle('get-repo-info', async (event, repoPath) => {
   const name = path.basename(repoPath);
   const fallback = {
@@ -543,53 +523,35 @@ ipcMain.handle('get-repo-info', async (event, repoPath) => {
   
   try {
     const git = simpleGit(repoPath);
-    let remoteUrl = '';
-    let branch = '无分支';
-    let status = { modified: [], staged: [], untracked: [], files: [] };
-    let logResult = { latest: null };
+    const info = await getRepoBasicInfo(git);
     
+    let lastCommit = null;
     try {
-      remoteUrl = getFirstRemoteUrl(await git.getRemotes(true));
+      const logResult = await git.log({ maxCount: 1 });
+      if (logResult.latest) {
+        lastCommit = { message: logResult.latest.message, date: logResult.latest.date };
+      }
     } catch (e) {}
-    
-    try {
-      const branches = await git.branchLocal();
-      branch = branches.current || branch;
-    } catch (e) {}
-    
-    try {
-      status = await git.status();
-    } catch (e) {}
-    
-    try {
-      logResult = await git.log({ maxCount: 1 });
-    } catch (e) {}
-    
-    const mod = status.modified || [];
-    const st = status.staged || [];
-    const unt = status.untracked || [];
-    const files = status.files || [];
     
     return {
       name,
       path: repoPath,
-      branch,
-      remoteUrl,
-      platform: detectPlatform(remoteUrl),
+      branch: info.branch,
+      remoteUrl: info.remoteUrl,
+      platform: detectPlatform(info.remoteUrl),
       status: {
-        modified: mod.length,
-        staged: st.length,
-        untracked: unt.length,
-        files
+        modified: info.modified,
+        staged: info.staged,
+        untracked: info.untracked,
+        files: info.files
       },
-      lastCommit: logResult.latest ? { message: logResult.latest.message, date: logResult.latest.date } : null
+      lastCommit
     };
   } catch (error) {
     return { ...fallback, error: error.message };
   }
 });
 
-// Git 操作：添加文件
 ipcMain.handle('git-add', async (event, repoPath, files = []) => {
   try {
     const git = simpleGit(repoPath);
@@ -604,7 +566,6 @@ ipcMain.handle('git-add', async (event, repoPath, files = []) => {
   }
 });
 
-// Git 操作：设置用户信息
 ipcMain.handle('git-set-user', async (event, repoPath, username, email) => {
   try {
     const git = simpleGit(repoPath);
@@ -616,7 +577,6 @@ ipcMain.handle('git-set-user', async (event, repoPath, username, email) => {
   }
 });
 
-// Git 操作：提交（自动追加：文件数、变更类型、行数 +ins -del）
 ipcMain.handle('git-commit', async (event, repoPath, message) => {
   try {
     const git = simpleGit(repoPath);
@@ -652,61 +612,44 @@ ipcMain.handle('git-commit', async (event, repoPath, message) => {
   }
 });
 
-// Git 操作：推送（支持SSH和代理）
+async function withGitEnv(config, fn) {
+  try {
+    if (config) setupGitEnvironment(config);
+    return await fn();
+  } finally {
+    clearGitEnvironment();
+  }
+}
+
 ipcMain.handle('git-push', async (event, repoPath, remote = 'origin', branch = null, config = null) => {
-  try {
+  return withGitEnv(config, async () => {
     const git = simpleGit(repoPath);
     const branches = await git.branchLocal();
     const targetBranch = branch || branches.current;
-    
-    if (config) setupGitEnvironment(config);
     await git.push(remote, targetBranch);
-    clearGitEnvironment();
-    
     return { success: true };
-  } catch (error) {
-    clearGitEnvironment();
-    return { success: false, error: error.message };
-  }
+  }).catch(error => ({ success: false, error: error.message }));
 });
 
-// Git 操作：拉取（支持SSH和代理）
 ipcMain.handle('git-pull', async (event, repoPath, remote = 'origin', branch = null, config = null) => {
-  try {
+  return withGitEnv(config, async () => {
     const git = simpleGit(repoPath);
     const branches = await git.branchLocal();
     const targetBranch = branch || branches.current;
-    
-    if (config) setupGitEnvironment(config);
     await git.pull(remote, targetBranch);
-    clearGitEnvironment();
-    
     return { success: true };
-  } catch (error) {
-    clearGitEnvironment();
-    return { success: false, error: error.message };
-  }
+  }).catch(error => ({ success: false, error: error.message }));
 });
 
-// Git 操作：克隆（支持SSH和代理）
 ipcMain.handle('git-clone', async (event, url, targetPath, options = {}, config = null) => {
-  try {
-    if (config) {
-      setupGitEnvironment(config);
-      url = processRemoteUrl(url, detectPlatform(url), config);
-    }
+  return withGitEnv(config, async () => {
+    if (config) url = processRemoteUrl(url, config);
     const git = simpleGit();
     await git.clone(url, targetPath, options);
-    clearGitEnvironment();
-    
     return { success: true };
-  } catch (error) {
-    clearGitEnvironment();
-    return { success: false, error: error.message };
-  }
+  }).catch(error => ({ success: false, error: error.message }));
 });
 
-// Stash：暂存列表、暂存、恢复
 ipcMain.handle('git-stash-list', async (event, repoPath) => {
   try {
     const git = simpleGit(repoPath);
@@ -737,7 +680,6 @@ ipcMain.handle('git-stash-pop', async (event, repoPath) => {
   }
 });
 
-// 执行 Git 命令（用于复杂操作）
 ipcMain.handle('exec-git', async (event, repoPath, command, args = []) => {
   return new Promise((resolve) => {
     const gitProcess = spawn('git', [command, ...args], {
@@ -774,7 +716,6 @@ ipcMain.handle('exec-git', async (event, repoPath, command, args = []) => {
   });
 });
 
-// 同步时忽略的目录/文件（.git 与依赖等）
 const SYNC_IGNORE = new Set([
   '.git', 'node_modules', '__pycache__', '.venv', 'venv', 'env', '.env',
   'dist', 'build', '.next', '.nuxt', '.cache', 'coverage', '.nyc_output',
@@ -809,7 +750,6 @@ function copyDirWithIgnore(srcDir, destDir) {
   }
 }
 
-// 同步仓库：优先远程 pull，否则忽略 .git/依赖 后复制
 ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinateRepoPath, commitMessage, mainConfig = null, subConfig = null) => {
   try {
     const mainGit = simpleGit(mainRepoPath);
@@ -820,7 +760,7 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinateRepoPath, co
     try {
       mainRemoteUrl = getFirstRemoteUrl(await mainGit.getRemotes(true)).replace(/\/$/, '');
       subRemoteUrl = getFirstRemoteUrl(await subGit.getRemotes(true)).replace(/\/$/, '');
-    } catch (e) { /* ignore */ }
+    } catch (e) {}
 
     const sameRemote = mainRemoteUrl && subRemoteUrl && mainRemoteUrl === subRemoteUrl;
 
@@ -836,14 +776,14 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinateRepoPath, co
     }
     await mainGit.commit(commitMessage + summary);
 
-    if (mainConfig) setupGitEnvironment(mainConfig);
-    await mainGit.push('origin');
-    clearGitEnvironment();
+    await withGitEnv(mainConfig, async () => {
+      await mainGit.push('origin');
+    });
 
     if (sameRemote) {
-      if (subConfig) setupGitEnvironment(subConfig);
-      await subGit.pull('origin');
-      clearGitEnvironment();
+      await withGitEnv(subConfig, async () => {
+        await subGit.pull('origin');
+      });
       return { success: true };
     }
 
@@ -871,27 +811,27 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinateRepoPath, co
     }
 
     await subGit.add('.');
-    if (subConfig?.username && subConfig?.email) {
-      await subGit.addConfig('user.name', subConfig.username, false);
-      await subGit.addConfig('user.email', subConfig.email, false);
-    } else if (mainConfig?.username && mainConfig?.email) {
-      await subGit.addConfig('user.name', mainConfig.username, false);
-      await subGit.addConfig('user.email', mainConfig.email, false);
-    } else {
-      throw new Error('请先配置平台的用户名和邮箱');
-    }
+    const userConfig = subConfig?.username && subConfig?.email
+      ? subConfig
+      : mainConfig?.username && mainConfig?.email
+        ? mainConfig
+        : null;
+    if (!userConfig) throw new Error('请先配置平台的用户名和邮箱');
+
+    await subGit.addConfig('user.name', userConfig.username, false);
+    await subGit.addConfig('user.email', userConfig.email, false);
     await subGit.commit(commitMessage + summary);
-    if (subConfig) setupGitEnvironment(subConfig);
-    await subGit.push('origin');
-    clearGitEnvironment();
+
+    await withGitEnv(subConfig, async () => {
+      await subGit.push('origin');
+    });
+
     return { success: true };
   } catch (error) {
-    clearGitEnvironment();
     return { success: false, error: error.message };
   }
 });
 
-// 检查 Git 是否安装
 ipcMain.handle('check-git', async () => {
   return new Promise((resolve) => {
     exec('git --version', (error, stdout) => {
@@ -903,7 +843,6 @@ ipcMain.handle('check-git', async () => {
   });
 });
 
-// 设置Git环境（SSH和代理）
 function setupGitEnvironment(config) {
   if (config.auth_type === 'ssh' && config.ssh_key_path) {
     let sshKey = config.ssh_key_path;
@@ -935,20 +874,16 @@ function setupGitEnvironment(config) {
   }
 }
 
-// 清理Git环境
 function clearGitEnvironment() {
   ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'GIT_SSH_COMMAND'].forEach(key => {
     delete process.env[key];
   });
 }
 
-// 处理远程URL（转换SSH、添加认证、代理）
-function processRemoteUrl(url, platform, config) {
+function processRemoteUrl(url, config) {
   if (!url || !config) return url;
   
-  // SSH转换
   if (config.auth_type === 'ssh' && (url.startsWith('http://') || url.startsWith('https://'))) {
-    // 转换为SSH格式
     const urlMatch = url.match(/https?:\/\/(?:www\.)?([^\/]+)\/(.+)/);
     if (urlMatch) {
       const host = urlMatch[1];
@@ -960,7 +895,6 @@ function processRemoteUrl(url, platform, config) {
     }
   }
   
-  // HTTPS认证（在URL中添加用户名和token）
   if (config.auth_type === 'password' && url.startsWith('https://') && config.password) {
     const urlMatch = url.match(/https:\/\/([^\/]+)\/(.+)/);
     if (urlMatch) {

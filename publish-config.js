@@ -67,24 +67,17 @@ const PLATFORMS = {
   }
 };
 
-function getVersion() {
-  return version;
-}
-
 function getPlatformsWithToken(env = process.env) {
-  return Object.values(PLATFORMS)
-    .filter((platform) => !!env[platform.envToken]);
+  return Object.values(PLATFORMS).filter(platform => env[platform.envToken]);
 }
 
 function getPublishConfig(platformKey) {
-  const p = PLATFORMS[platformKey];
-  return p ? p.publishConfig : null;
+  return PLATFORMS[platformKey]?.publishConfig || null;
 }
 
 module.exports = {
-  version: getVersion(),
+  version,
   PLATFORMS,
-  getVersion,
   getPlatformsWithToken,
   getPublishConfig
 };

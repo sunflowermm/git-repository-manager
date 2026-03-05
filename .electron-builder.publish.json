@@ -1,0 +1,14 @@
+{
+  "appId": "com.sunflower.gitmanager",
+  "productName": "向日葵Git仓库管理",
+  "win": {
+    "icon": "assets/icon.ico"
+  },
+  "publish": {
+    "provider": "github",
+    "owner": "sunflowermm",
+    "repo": "git-repository-manager",
+    "releaseType": "release",
+    "publishAutoUpdate": true
+  }
+}

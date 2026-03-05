@@ -577,21 +577,25 @@ ipcMain.handle('git-set-user', async (event, repoPath, username, email) => {
   }
 });
 
+function generateCommitSummary(status) {
+  const mod = status.modified || [];
+  const untracked = status.untracked || [];
+  const files = status.files || [];
+
+  const parts = [];
+  if (mod.length) parts.push(`${mod.length} 修改`);
+  if (untracked.length) parts.push(`${untracked.length} 新增`);
+  const deleted = files.filter(f => (f.working_dir || f.index) === 'D').length;
+  if (deleted) parts.push(`${deleted} 删除`);
+
+  return parts.length ? ` [${parts.join(', ')}]` : '';
+}
+
 ipcMain.handle('git-commit', async (event, repoPath, message) => {
   try {
     const git = simpleGit(repoPath);
     const status = await git.status();
-    const mod = status.modified || [];
-    const staged = status.staged || [];
-    const untracked = status.untracked || [];
-    const files = status.files || [];
-
-    let summary = '';
-    const parts = [];
-    if (mod.length) parts.push(`${mod.length} 修改`);
-    if (untracked.length) parts.push(`${untracked.length} 新增`);
-    const deleted = files.filter(f => (f.working_dir || f.index) === 'D').length;
-    if (deleted) parts.push(`${deleted} 删除`);
+    const summary = generateCommitSummary(status);
 
     let insertions = 0;
     let deletions = 0;
@@ -601,10 +605,8 @@ ipcMain.handle('git-commit', async (event, repoPath, message) => {
       if (diff && typeof diff.deletions === 'number') deletions = diff.deletions;
     } catch (e) {}
 
-    if (insertions || deletions) parts.push(`+${insertions} -${deletions} 行`);
-    if (parts.length) summary = ` [${parts.join(', ')}]`;
-
-    const fullMessage = (message.trim() || 'Update') + summary;
+    const lineChanges = insertions || deletions ? ` +${insertions} -${deletions} 行` : '';
+    const fullMessage = (message.trim() || 'Update') + summary + lineChanges;
     await git.commit(fullMessage);
     return { success: true, message: fullMessage };
   } catch (error) {
@@ -766,15 +768,24 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinateRepoPath, co
 
     await mainGit.add('.');
     const status = await mainGit.status();
-    const mod = status.modified || [];
-    const unt = status.untracked || [];
-    const summary = (mod.length || unt.length) ? ` [${mod.length} 修改, ${unt.length} 新增]` : '';
+    const summary = generateCommitSummary(status);
+
+    let insertions = 0;
+    let deletions = 0;
+    try {
+      const diff = await mainGit.diffSummary(['--cached']);
+      if (diff && typeof diff.insertions === 'number') insertions = diff.insertions;
+      if (diff && typeof diff.deletions === 'number') deletions = diff.deletions;
+    } catch (e) {}
+
+    const lineChanges = insertions || deletions ? ` +${insertions} -${deletions} 行` : '';
 
     if (mainConfig?.username && mainConfig?.email) {
       await mainGit.addConfig('user.name', mainConfig.username, false);
       await mainGit.addConfig('user.email', mainConfig.email, false);
     }
-    await mainGit.commit(commitMessage + summary);
+    const fullMessage = commitMessage + summary + lineChanges;
+    await mainGit.commit(fullMessage);
 
     await withGitEnv(mainConfig, async () => {
       await mainGit.push('origin');
@@ -820,7 +831,7 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinateRepoPath, co
 
     await subGit.addConfig('user.name', userConfig.username, false);
     await subGit.addConfig('user.email', userConfig.email, false);
-    await subGit.commit(commitMessage + summary);
+    await subGit.commit(fullMessage);
 
     await withGitEnv(subConfig, async () => {
       await subGit.push('origin');

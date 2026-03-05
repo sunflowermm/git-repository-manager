@@ -44,51 +44,11 @@ graph TB
 ### 系统要求
 
 - **操作系统**：Windows 7+ / macOS 10.10+ / Linux
-- **Node.js**：v18.0.0+（开发环境）
-- **pnpm**：v7.0.0+（必需）
 - **Git**：已安装并配置（必需）
-
-### 安装
-
-```bash
-# 安装依赖
-pnpm install
-
-# 运行开发版本
-pnpm dev
-
-# 打包应用（不发布）
-pnpm build
-```
 
 ## 📖 使用指南
 
-### 工作流程
 
-```mermaid
-flowchart TD
-    A[启动应用] --> B[添加仓库]
-    B --> C[配置平台认证]
-    C --> D{选择操作}
-    
-    D --> E[提交变更]
-    D --> F[提交并推送]
-    D --> G[提交并同步]
-    D --> H[拉取/推送]
-    D --> I[分支管理]
-    D --> J[克隆仓库]
-    
-    E --> K[查看操作日志]
-    F --> K
-    G --> K
-    H --> K
-    I --> K
-    J --> K
-    
-    style A fill:#E3F2FD
-    style C fill:#FFF3E0
-    style K fill:#E8F5E9
-```
 
 ### 1. 添加仓库
 
@@ -146,61 +106,7 @@ flowchart TD
 
 支持 HTTPS、SSH 及代理 URL，克隆成功后自动添加到列表。
 
-## ⚙️ 配置说明
 
-### 配置文件位置
-
-- **Windows**：`%APPDATA%\git-manager-electron\config.json`
-- **macOS**：`~/Library/Application Support/git-manager-electron/config.json`
-- **Linux**：`~/.config/git-manager-electron/config.json`
-
-### 配置结构
-
-```mermaid
-graph LR
-    A[config.json] --> B[repo_paths]
-    A --> C[platform_configs]
-    A --> D[sync_config]
-    A --> E[theme]
-    
-    C --> F[GitHub]
-    C --> G[Gitee]
-    C --> H[GitLab]
-    
-    D --> I[sync_groups]
-    D --> J[repo_to_group]
-    
-    style A fill:#4CAF50
-    style C fill:#2196F3
-    style D fill:#FF9800
-```
-
-**配置示例：**
-
-```json
-{
-  "repo_paths": ["仓库路径1", "仓库路径2"],
-  "platform_configs": {
-    "GitHub": {
-      "auth_type": "ssh",
-      "ssh_key_path": "C:\\Users\\username\\.ssh\\id_ed25519",
-      "username": "your-username",
-      "email": "your@email.com",
-      "use_proxy": true,
-      "proxy_url": "https://ghproxy.net/"
-    }
-  },
-  "sync_config": {
-    "sync_groups": {
-      "group_1234567890": {
-        "main": "主仓库名",
-        "subordinates": ["从仓库1", "从仓库2"]
-      }
-    }
-  },
-  "theme": "light"
-}
-```
 
 ## ⚠️ 注意事项
 
@@ -242,11 +148,7 @@ git config --global user.email "your@email.com"
 3. ✅ 目标目录是否已存在同名文件夹
 4. ✅ 网络连接是否正常
 
-### 应用无法启动
-**解决方案：**
-1. 检查 Node.js 版本：`node --version`（需要 v14+）
-2. 检查 pnpm 版本：`pnpm --version`（需要 v7+）
-3. 重新安装依赖：删除 `node_modules` 和 `pnpm-lock.yaml` 后重新 `pnpm install`
+
 
 ## 🔄 自动更新
 
@@ -276,37 +178,7 @@ git config --global user.email "your@email.com"
 
 > 💡 **提示**：更新需要重启应用才能生效，不是热更新。建议在完成当前工作后重启应用。
 
----
 
-## 👨‍💻 开发者
-
-### 发布新版本
-
-**前置准备：**
-1. 在项目根目录创建 `.env` 文件，按需填入发布 Token（可只填一个，也可同时填多个平台）：
-   ```
-   GH_TOKEN=你的token
-   GITEE_TOKEN=你的token
-   GITCODE_TOKEN=你的token
-   ```
-   > 💡 GitHub Token 获取：`https://github.com/settings/tokens`（需要 `repo` 权限）
-
-2. 准备图标文件（放在 `assets/` 目录）：
-   - `icon.ico` - Windows 图标（必需）
-
-**发布步骤：**
-1. 在 `history/` 目录创建版本更新日志文件（如 `v1.1.2.md`）
-2. 更新 `package.json` 中的版本号
-3. 运行 `pnpm run publish` 构建并发布 Windows 版本（x64 和 ia32）
-
-> 💡 **提示**：发布脚本会按平台分别构建（避免更新源串平台），并自动读取 `history/v{version}.md` 作为 Release 说明。
-
-**验证发布：**
-- 访问 GitHub Releases：`https://github.com/sunflowermm/git-repository-manager/releases`
-- 如果看到 "Draft releases"，点击进入并手动点击 "Publish release"
-- 确认所有架构的安装包和更新文件（`latest*.yml`、`.blockmap`）已上传
-
-> 📖 **注意**：发布更新是开发者操作，用户无需关心。用户安装的应用会自动从其下载来源平台检查更新。
 
 ## 📝 更新日志
 

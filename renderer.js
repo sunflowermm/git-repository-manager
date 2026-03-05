@@ -54,6 +54,7 @@ function initElements() {
             commitSync: document.getElementById('btn-commit-sync'),
             refreshChanges: document.getElementById('btn-refresh-changes'),
             pull: document.getElementById('btn-pull'),
+            pullForce: document.getElementById('btn-pull-force'),
             push: document.getElementById('btn-push'),
             stash: document.getElementById('btn-stash'),
             stashPop: document.getElementById('btn-stash-pop'),
@@ -173,6 +174,7 @@ function setupEventListeners() {
     btn.commitSync?.addEventListener('click', commitAndSync);
     btn.refreshChanges?.addEventListener('click', refreshChanges);
     btn.pull?.addEventListener('click', pullChanges);
+    btn.pullForce?.addEventListener('click', pullChangesForce);
     btn.push?.addEventListener('click', pushChanges);
     btn.stash?.addEventListener('click', stashChanges);
     btn.stashPop?.addEventListener('click', stashPop);
@@ -723,6 +725,21 @@ async function pullChanges() {
     );
 }
 
+async function pullChangesForce() {
+    if (!checkRepoSelected()) return;
+    const confirmed = await showConfirmModal('确认强制拉取', '强制拉取会覆盖本地未提交的更改，确定要继续吗？');
+    if (!confirmed) return;
+    
+    log('开始强制拉取...', 'info');
+    const config = getCurrentRepoConfig();
+    await withErrorHandling(
+        () => ipcRenderer.invoke('exec-git', state.currentRepo.path, 'pull', ['--force']),
+        '强制拉取成功！',
+        '强制拉取失败',
+        refreshCurrentRepo
+    );
+}
+
 async function pushChanges() {
     if (!checkRepoSelected()) return;
     log('开始推送...', 'info');
@@ -976,14 +993,28 @@ function openSyncConfig() {
     }, 100);
 }
 
-// 更新从仓库列表：移除主仓库选项
+// 更新从仓库列表：移除主仓库选项和已在其他同步组的仓库
 function updateSubordinateReposList() {
     const mainRepo = document.getElementById('sync-main-repo')?.value;
     const container = document.getElementById('sync-subordinate-repos');
     if (!container) return;
     
+    // 获取所有已在同步组中的仓库名称
+    const groupedRepos = new Set();
+    Object.values(state.syncConfig.sync_groups || {}).forEach(group => {
+        if (group.main) groupedRepos.add(group.main);
+        if (group.subordinates) {
+            group.subordinates.forEach(sub => groupedRepos.add(sub));
+        }
+    });
+    
     container.innerHTML = state.repos
-        .filter(r => !mainRepo || r.name !== mainRepo)
+        .filter(r => {
+            // 过滤掉主仓库
+            if (mainRepo && r.name === mainRepo) return false;
+            // 过滤掉已在其他同步组中的仓库
+            return !groupedRepos.has(r.name);
+        })
         .map(r => `
             <label style="display: block; margin-bottom: 8px;">
                 <input type="checkbox" value="${r.name}" class="form-checkbox">
@@ -994,23 +1025,47 @@ function updateSubordinateReposList() {
 
 // 创建同步配置内容
 function createSyncConfigContent() {
+    // 获取所有已在同步组中的仓库名称
+    const groupedRepos = new Set();
+    Object.values(state.syncConfig.sync_groups || {}).forEach(group => {
+        if (group.main) groupedRepos.add(group.main);
+        if (group.subordinates) {
+            group.subordinates.forEach(sub => groupedRepos.add(sub));
+        }
+    });
+    
     let html = `
         <div class="form-group">
             <label class="form-label">主仓库</label>
             <select class="form-select" id="sync-main-repo">
                 <option value="">选择主仓库</option>
-                ${state.repos.map(r => `<option value="${r.name}">${r.name}</option>`).join('')}
+                ${state.repos.map(r => `
+                    <option value="${r.name}" ${!groupedRepos.has(r.name) ? '' : 'disabled'} ${!groupedRepos.has(r.name) ? '' : 'title="已在其他同步组中"'}>
+                        ${r.name}${groupedRepos.has(r.name) ? ' (已在同步组中)' : ''}
+                    </option>
+                `).join('')}
             </select>
         </div>
         <div class="form-group">
             <label class="form-label">从仓库（可多选）</label>
             <div id="sync-subordinate-repos" style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 6px; padding: 10px;">
-                ${state.repos.map(r => `
-                    <label style="display: block; margin-bottom: 8px;">
-                        <input type="checkbox" value="${r.name}" class="form-checkbox">
-                        <span>${r.name}</span>
-                    </label>
-                `).join('')}
+                ${state.repos.map(r => {
+                    // 过滤掉已在同步组中的仓库
+                    if (groupedRepos.has(r.name)) {
+                        return `
+                            <label style="display: block; margin-bottom: 8px; opacity: 0.6;">
+                                <input type="checkbox" value="${r.name}" class="form-checkbox" disabled>
+                                <span>${r.name} (已在同步组中)</span>
+                            </label>
+                        `;
+                    }
+                    return `
+                        <label style="display: block; margin-bottom: 8px;">
+                            <input type="checkbox" value="${r.name}" class="form-checkbox">
+                            <span>${r.name}</span>
+                        </label>
+                    `;
+                }).join('')}
             </div>
         </div>
         <div class="form-group">
@@ -1051,7 +1106,8 @@ window.saveSyncGroup = function() {
         return;
     }
     
-    const checkboxes = document.querySelectorAll('#sync-subordinate-repos input[type="checkbox"]:checked');
+    // 只获取未禁用的复选框
+    const checkboxes = document.querySelectorAll('#sync-subordinate-repos input[type="checkbox"]:checked:not(:disabled)');
     const subordinates = Array.from(checkboxes).map(cb => cb.value);
     
     if (subordinates.length === 0) {
@@ -1061,10 +1117,12 @@ window.saveSyncGroup = function() {
     
     const groupId = `group_${Date.now()}`;
     
+    // 移除主仓库之前的同步组
     if (state.syncConfig.repo_to_group?.[mainRepo]) {
         delete state.syncConfig.sync_groups[state.syncConfig.repo_to_group[mainRepo]];
     }
     
+    // 移除从仓库之前的同步组关联
     subordinates.forEach(sub => {
         const oldGroupId = state.syncConfig.repo_to_group?.[sub];
         if (oldGroupId) {
@@ -1874,7 +1932,7 @@ function handleUpdateStatus(data) {
 let _lastLoggedProgressPct = -1;
 let _progressUpdateTimer = null;
 
-function handleUpdateProgress(progress) {
+function handleUpdateProgress(_, progress) {
     // 确保进度模态框已显示
     let bar = document.getElementById('update-progress-bar');
     let text = document.getElementById('update-progress-text');
@@ -1891,14 +1949,18 @@ function handleUpdateProgress(progress) {
     const transferred = Number(progress.transferred) || 0;
     const total = Number(progress.total) || 0;
 
+    // 添加平滑过渡动画
+    bar.style.transition = 'width 0.3s ease-out';
     bar.style.width = `${pct}%`;
     
+    // 改进进度文本显示
     if (total > 0) {
-        text.textContent = `${pct}% (${formatBytes(transferred)}/${formatBytes(total)})`;
+        const speed = progress.bytesPerSecond ? formatBytes(progress.bytesPerSecond) + '/s' : '';
+        text.textContent = `${pct}% (${formatBytes(transferred)}/${formatBytes(total)}) ${speed}`;
     } else if (transferred > 0) {
         text.textContent = `${pct}% (${formatBytes(transferred)})`;
     } else {
-        text.textContent = `${pct}%`;
+        text.textContent = `${pct}% (准备中...)`;
     }
 
     // 清除超时定时器（收到进度更新）
@@ -1914,6 +1976,10 @@ function handleUpdateProgress(progress) {
     } else if (pct > 0 && _lastLoggedProgressPct === -1) {
         log(`更新: 下载进度开始更新 (${pct}%)`, 'info');
         _lastLoggedProgressPct = 0;
+    } else if (pct % 10 === 0 && pct > _lastLoggedProgressPct) {
+        // 每10%记录一次进度
+        _lastLoggedProgressPct = pct;
+        log(`更新: 下载进度 ${pct}%`, 'info');
     }
 }
 

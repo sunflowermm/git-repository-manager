@@ -7,6 +7,8 @@
     "start": "electron .",
     "dev": "electron .",
     "build": "electron-builder --publish=never",
+    "build:x64": "electron-builder --win --x64 --publish=never",
+    "build:ia32": "electron-builder --win --ia32 --publish=never",
     "publish": "node publish.js"
   },
   "keywords": [
@@ -30,6 +32,7 @@
   "build": {
     "appId": "com.sunflower.gitmanager",
     "productName": "向日葵Git仓库管理",
+    "compression": "maximum",
     "directories": {
       "output": "dist"
     },
@@ -44,7 +47,9 @@
       "!node_modules/**/CHANGELOG*",
       "!node_modules/**/README*",
       "!node_modules/**/.git/**/*",
-      "!node_modules/**/.github/**/*"
+      "!node_modules/**/.github/**/*",
+      "!dist/**/*",
+      "!history/**/*"
     ],
     "asarUnpack": [
       "node_modules/@kwsites/**/*"
@@ -55,12 +60,6 @@
           "target": "nsis",
           "arch": [
             "x64"
-          ]
-        },
-        {
-          "target": "nsis",
-          "arch": [
-            "ia32"
           ]
         }
       ],

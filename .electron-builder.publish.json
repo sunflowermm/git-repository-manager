@@ -1,0 +1,24 @@
+{
+  "appId": "com.sunflower.gitmanager",
+  "productName": "向日葵Git仓库管理",
+  "win": {
+    "icon": "assets/icon.ico"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "uninstallDisplayName": "向日葵Git仓库管理",
+    "installerIcon": "assets/icon.ico",
+    "uninstallerIcon": "assets/icon.ico",
+    "installerHeaderIcon": "assets/icon.ico"
+  },
+  "publish": {
+    "provider": "github",
+    "owner": "sunflowermm",
+    "repo": "git-repository-manager",
+    "releaseType": "release",
+    "publishAutoUpdate": true
+  }
+}

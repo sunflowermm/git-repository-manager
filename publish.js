@@ -34,15 +34,28 @@ function getReleaseNotes() {
 
 function getDistArtifacts() {
   if (!existsSync(distDir)) return [];
-  return readdirSync(distDir)
-    .filter(
-      (name) =>
-        (name.endsWith('.exe') && name.includes(version)) || name === 'latest.yml'
-    )
-    .map((name) => ({
-      name,
-      filePath: path.join(distDir, name)
-    }));
+  const files = readdirSync(distDir);
+  const artifacts = [];
+  
+  // 只添加一个exe文件（优先选择nsis安装包）
+  const exeFiles = files.filter(name => name.endsWith('.exe') && name.includes(version));
+  if (exeFiles.length > 0) {
+    // 优先选择包含Setup的安装包
+    const setupExe = exeFiles.find(name => name.includes('Setup'));
+    if (setupExe) {
+      artifacts.push({ name: setupExe, filePath: path.join(distDir, setupExe) });
+    } else {
+      // 如果没有Setup文件，选择第一个exe文件
+      artifacts.push({ name: exeFiles[0], filePath: path.join(distDir, exeFiles[0]) });
+    }
+  }
+  
+  // 添加latest.yml文件
+  if (files.includes('latest.yml')) {
+    artifacts.push({ name: 'latest.yml', filePath: path.join(distDir, 'latest.yml') });
+  }
+  
+  return artifacts;
 }
 
 function createElectronBuilderConfig(platformKey) {
@@ -51,10 +64,12 @@ function createElectronBuilderConfig(platformKey) {
   writeFileSync(
     tempBuilderConfigPath,
     JSON.stringify({
-      publish: publishConfig,
+      appId: 'com.sunflower.gitmanager',
+      productName: '向日葵Git仓库管理',
       win: {
         icon: 'assets/icon.ico'
-      }
+      },
+      publish: publishConfig
     }, null, 2),
     'utf-8'
   );
@@ -68,12 +83,27 @@ function removeTempBuilderConfig() {
   }
 }
 
+function clearDistDir() {
+  if (existsSync(distDir)) {
+    debug('清空 dist 目录');
+    readdirSync(distDir).forEach(file => {
+      const filePath = path.join(distDir, file);
+      try {
+        unlinkSync(filePath);
+      } catch (e) {
+        debug('删除文件失败:', filePath, e.message);
+      }
+    });
+  }
+}
+
 function runElectronBuilder(platformKey, doPublish) {
   if (!doPublish && hasBuiltInstaller) {
     debug('跳过重复构建，复用 dist 产物', { platformKey, doPublish });
     return Promise.resolve();
   }
 
+  clearDistDir();
   createElectronBuilderConfig(platformKey);
 
   return new Promise((resolve, reject) => {
@@ -230,6 +260,35 @@ async function ensureGiteeRelease(platform, token, releaseNotes) {
   return created.id;
 }
 
+async function deleteExistingGiteeAttachments(platform, token, releaseId, fileName) {
+  const base = `${platform.apiBase}/repos/${platform.owner}/${platform.repo}`;
+  const auth = `access_token=${encodeURIComponent(token)}`;
+  
+  // 获取当前release的附件列表
+  const listRes = await fetch(`${base}/releases/${releaseId}/attach_files?${auth}`);
+  if (!listRes.ok) {
+    console.warn('⚠️ 获取 Gitee 附件列表失败:', await listRes.text());
+    return;
+  }
+  
+  const attachments = await listRes.json();
+  if (!Array.isArray(attachments)) return;
+  
+  // 查找并删除同名附件
+  for (const attachment of attachments) {
+    if (attachment.name === fileName) {
+      const deleteRes = await fetch(`${base}/releases/${releaseId}/attach_files/${attachment.id}?${auth}`, {
+        method: 'DELETE'
+      });
+      if (deleteRes.ok) {
+        debug('已删除 Gitee 旧附件:', fileName);
+      } else {
+        console.warn('⚠️ 删除 Gitee 旧附件失败:', fileName, await deleteRes.text());
+      }
+    }
+  }
+}
+
 async function publishGitee(platform, releaseNotes) {
   debug('开始发布 Gitee');
   await runElectronBuilder(platform.key, false);
@@ -244,6 +303,9 @@ async function publishGitee(platform, releaseNotes) {
   const attachUrl = `${base}/releases/${releaseId}/attach_files`;
 
   for (const file of getDistArtifacts()) {
+    // 先删除现有的同名文件
+    await deleteExistingGiteeAttachments(platform, token, releaseId, file.name);
+    
     const res = await uploadByFormData(
       `${attachUrl}`,
       'access_token',

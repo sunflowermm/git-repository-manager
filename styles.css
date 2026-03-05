@@ -457,6 +457,7 @@ select {
 .repo-list-container {
     height: calc(100% - 50px);
     overflow-y: auto;
+    overflow-x: hidden;
 }
 
 .repo-list {
@@ -1025,6 +1026,145 @@ select {
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
     animation: modalSlideIn var(--transition-slow) cubic-bezier(0.4, 0, 0.2, 1);
     transform-origin: center;
+}
+
+/* 同步配置弹窗：禁用整体滚动，改为内部卡片各自滚动 */
+.modal-content--sync {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: 80vh;
+}
+
+.modal-content--sync .modal-header {
+    flex-shrink: 0;
+}
+
+.modal-content--sync .modal-body {
+    flex: 1;
+    overflow: hidden;
+    max-height: none;
+    margin-bottom: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.modal-content--sync .modal-footer {
+    flex-shrink: 0;
+}
+
+.sync-config {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.sync-config-grid {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.sync-card {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+}
+
+.sync-card-header {
+    padding: 10px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.sync-card-body {
+    padding: 12px;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1;
+}
+
+.sync-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.sync-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.sync-actions .btn {
+    padding: 6px 10px;
+    font-size: 12px;
+}
+
+.sync-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 10px;
+    background: var(--bg-secondary);
+}
+
+.sync-check-item {
+    display: block;
+    margin-bottom: 8px;
+}
+
+.sync-check-item:last-child {
+    margin-bottom: 0;
+}
+
+.sync-check-item--disabled {
+    opacity: 0.6;
+}
+
+.sync-group-item {
+    padding: 10px;
+    margin-bottom: 10px;
+    background: var(--bg-tertiary);
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+}
+
+.sync-group-item:last-child {
+    margin-bottom: 0;
+}
+
+.sync-group-actions {
+    margin-top: 8px;
+    display: flex;
+    justify-content: flex-end;
+}
+
+.sync-group-actions .btn {
+    padding: 5px 10px;
+    font-size: 12px;
+}
+
+@media (max-width: 900px) {
+    .sync-config-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 @keyframes modalSlideIn {

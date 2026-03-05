@@ -5,7 +5,7 @@
  */
 require('dotenv').config();
 const { spawn } = require('child_process');
-const { readFileSync, existsSync, writeFileSync, readdirSync, unlinkSync } = require('fs');
+const { readFileSync, existsSync, writeFileSync, readdirSync, unlinkSync, rmSync, mkdirSync } = require('fs');
 const path = require('path');
 const { Octokit } = require('@octokit/rest');
 const {
@@ -19,12 +19,18 @@ const rootDir = __dirname;
 const historyDir = path.join(rootDir, 'history');
 const distDir = path.join(rootDir, 'dist');
 const tempBuilderConfigPath = path.join(rootDir, '.electron-builder.publish.json');
-let hasBuiltInstaller = false;
 
 function debug(...args) {
   console.log('[publish:debug]', ...args);
 }
 
+function getBaseBuildConfig() {
+  const pkg = JSON.parse(readFileSync(path.join(rootDir, 'package.json'), 'utf-8'));
+  if (!pkg || typeof pkg !== 'object' || !pkg.build) {
+    throw new Error('未找到 package.json 的 build 配置');
+  }
+  return pkg.build;
+}
 
 function getReleaseNotes() {
   const p = path.join(historyDir, `v${version}.md`);
@@ -37,22 +43,22 @@ function getDistArtifacts() {
   const files = readdirSync(distDir);
   const artifacts = [];
   
-  // 只添加一个exe文件（优先选择nsis安装包）
-  const exeFiles = files.filter(name => name.endsWith('.exe') && name.includes(version));
-  if (exeFiles.length > 0) {
-    // 优先选择包含Setup的安装包
-    const setupExe = exeFiles.find(name => name.includes('Setup'));
-    if (setupExe) {
-      artifacts.push({ name: setupExe, filePath: path.join(distDir, setupExe) });
-    } else {
-      // 如果没有Setup文件，选择第一个exe文件
-      artifacts.push({ name: exeFiles[0], filePath: path.join(distDir, exeFiles[0]) });
-    }
+  // 优先上传 updater 元数据（支持多架构：latest.yml / latest-ia32.yml 等）
+  const ymlFiles = files.filter(name => /^latest.*\.yml$/i.test(name));
+  for (const name of ymlFiles) {
+    artifacts.push({ name, filePath: path.join(distDir, name) });
   }
-  
-  // 添加latest.yml文件
-  if (files.includes('latest.yml')) {
-    artifacts.push({ name: 'latest.yml', filePath: path.join(distDir, 'latest.yml') });
+
+  // 上传安装包（可能同时存在 x64/ia32）
+  const exeFiles = files.filter(name => name.toLowerCase().endsWith('.exe') && name.includes(version));
+  for (const name of exeFiles) {
+    artifacts.push({ name, filePath: path.join(distDir, name) });
+  }
+
+  // 上传 blockmap（差分更新需要）
+  const blockmapFiles = files.filter(name => name.toLowerCase().endsWith('.blockmap') && name.includes(version));
+  for (const name of blockmapFiles) {
+    artifacts.push({ name, filePath: path.join(distDir, name) });
   }
   
   return artifacts;
@@ -61,26 +67,10 @@ function getDistArtifacts() {
 function createElectronBuilderConfig(platformKey) {
   const publishConfig = getPublishConfig(platformKey);
   if (!publishConfig) throw new Error(`未知平台: ${platformKey}`);
+  const baseBuild = getBaseBuildConfig();
   writeFileSync(
     tempBuilderConfigPath,
-    JSON.stringify({
-      appId: 'com.sunflower.gitmanager',
-      productName: '向日葵Git仓库管理',
-      win: {
-        icon: 'assets/icon.ico'
-      },
-      nsis: {
-        oneClick: false,
-        allowToChangeInstallationDirectory: true,
-        createDesktopShortcut: true,
-        createStartMenuShortcut: true,
-        uninstallDisplayName: '向日葵Git仓库管理',
-        installerIcon: 'assets/icon.ico',
-        uninstallerIcon: 'assets/icon.ico',
-        installerHeaderIcon: 'assets/icon.ico'
-      },
-      publish: publishConfig
-    }, null, 2),
+    JSON.stringify({ ...baseBuild, publish: publishConfig }, null, 2),
     'utf-8'
   );
 }
@@ -94,25 +84,20 @@ function removeTempBuilderConfig() {
 }
 
 function clearDistDir() {
-  if (existsSync(distDir)) {
-    debug('清空 dist 目录');
-    readdirSync(distDir).forEach(file => {
-      const filePath = path.join(distDir, file);
-      try {
-        unlinkSync(filePath);
-      } catch (e) {
-        debug('删除文件失败:', filePath, e.message);
-      }
-    });
+  debug('清空 dist 目录');
+  try {
+    rmSync(distDir, { recursive: true, force: true });
+  } catch (e) {
+    // ignore
+  }
+  try {
+    mkdirSync(distDir, { recursive: true });
+  } catch (e) {
+    // ignore
   }
 }
 
 function runElectronBuilder(platformKey, doPublish) {
-  if (!doPublish && hasBuiltInstaller) {
-    debug('跳过重复构建，复用 dist 产物', { platformKey, doPublish });
-    return Promise.resolve();
-  }
-
   clearDistDir();
   createElectronBuilderConfig(platformKey);
 
@@ -142,7 +127,6 @@ function runElectronBuilder(platformKey, doPublish) {
       removeTempBuilderConfig();
       debug('electron-builder 执行结束', { platformKey, doPublish, code });
       if (code === 0) {
-        hasBuiltInstaller = true;
         resolve();
       } else reject(new Error(`electron-builder 退出码: ${code}`));
     });
@@ -299,23 +283,12 @@ async function deleteExistingGiteeAttachments(platform, token, releaseId, fileNa
   }
 }
 
-async function publishGitee(platform, releaseNotes) {
-  debug('开始发布 Gitee');
-  await runElectronBuilder(platform.key, false);
-
-  const token = process.env[platform.envToken];
-  if (!token) {
-    throw new Error('缺少 GITEE_TOKEN');
-  }
-
-  const releaseId = await ensureGiteeRelease(platform, token, releaseNotes || `v${version}`);
+async function uploadGiteeArtifacts(platform, token, releaseId) {
   const base = `${platform.apiBase}/repos/${platform.owner}/${platform.repo}`;
   const attachUrl = `${base}/releases/${releaseId}/attach_files`;
 
   for (const file of getDistArtifacts()) {
-    // 先删除现有的同名文件
     await deleteExistingGiteeAttachments(platform, token, releaseId, file.name);
-    
     const res = await uploadByFormData(
       `${attachUrl}`,
       'access_token',
@@ -326,6 +299,25 @@ async function publishGitee(platform, releaseNotes) {
     if (res.ok) console.log('✅ Gitee 已上传:', file.name);
     else console.warn('⚠️ Gitee 上传失败:', file.name, await res.text());
   }
+}
+
+async function publishGitee(platform, releaseNotes) {
+  debug('开始发布 Gitee');
+  await runElectronBuilder(platform.key, false);
+
+  const token = process.env[platform.envToken];
+  if (!token) {
+    throw new Error('缺少 GITEE_TOKEN');
+  }
+
+  // 版本 Release（便于查看版本历史）
+  const versionReleaseId = await ensureGiteeRelease(platform, token, releaseNotes || `v${version}`);
+  await uploadGiteeArtifacts(platform, token, versionReleaseId);
+
+  // latest Release（用于 generic 更新源的稳定下载路径：/releases/download/latest/）
+  const latestPlatform = { ...platform, releaseTag: 'latest' };
+  const latestReleaseId = await ensureGiteeRelease(latestPlatform, token, releaseNotes || `v${version}`);
+  await uploadGiteeArtifacts(latestPlatform, token, latestReleaseId);
 }
 
 async function ensureGitCodeRelease(platform, token, releaseNotes) {

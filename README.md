@@ -44,7 +44,7 @@ graph TB
 ### 系统要求
 
 - **操作系统**：Windows 7+ / macOS 10.10+ / Linux
-- **Node.js**：v14.0.0+（开发环境）
+- **Node.js**：v18.0.0+（开发环境）
 - **pnpm**：v7.0.0+（必需）
 - **Git**：已安装并配置（必需）
 
@@ -250,7 +250,11 @@ git config --global user.email "your@email.com"
 
 ## 🔄 自动更新
 
-应用支持自动更新功能，通过 GitHub Releases 自动检查并安装更新。
+应用支持自动更新功能，并且 **从哪下载就从哪更新**：发行版按平台独立构建，安装包内嵌对应平台的更新源，确保更新不会串到别的平台。
+
+- **GitHub 发行版**：通过 GitHub Releases 检查与下载更新
+- **Gitee 发行版**：通过 Gitee Releases 的 `latest` 下载路径检查与下载更新（发布脚本会维护 `latest` Release）
+- **GitCode 发行版**：通过 GitCode 的 “permalink latest downloads” 路径检查与下载更新
 
 ### 更新流程
 
@@ -279,28 +283,30 @@ git config --global user.email "your@email.com"
 ### 发布新版本
 
 **前置准备：**
-1. 在项目根目录创建 `.env` 文件，填入 GitHub Token：
+1. 在项目根目录创建 `.env` 文件，按需填入发布 Token（可只填一个，也可同时填多个平台）：
    ```
    GH_TOKEN=你的token
+   GITEE_TOKEN=你的token
+   GITCODE_TOKEN=你的token
    ```
-   > 💡 获取 Token：https://github.com/settings/tokens（需要 `repo` 权限）
+   > 💡 GitHub Token 获取：`https://github.com/settings/tokens`（需要 `repo` 权限）
 
 2. 准备图标文件（放在 `assets/` 目录）：
    - `icon.ico` - Windows 图标（必需）
 
 **发布步骤：**
-1. 在 `history/` 目录创建版本更新日志文件（如 `v2.6.0.md`）
+1. 在 `history/` 目录创建版本更新日志文件（如 `v1.1.2.md`）
 2. 更新 `package.json` 中的版本号
 3. 运行 `pnpm run publish` 构建并发布 Windows 版本（x64 和 ia32）
 
-> 💡 **提示**：发布脚本会自动读取 `history/` 目录中最新版本的 `.md` 文件作为 Release 说明
+> 💡 **提示**：发布脚本会按平台分别构建（避免更新源串平台），并自动读取 `history/v{version}.md` 作为 Release 说明。
 
 **验证发布：**
-- 访问：https://github.com/sunflowermm/git-repository-manager/releases
+- 访问 GitHub Releases：`https://github.com/sunflowermm/git-repository-manager/releases`
 - 如果看到 "Draft releases"，点击进入并手动点击 "Publish release"
-- 确认所有架构的安装包和更新文件（latest.yml）已上传
+- 确认所有架构的安装包和更新文件（`latest*.yml`、`.blockmap`）已上传
 
-> 📖 **注意**：发布更新是开发者操作，用户无需关心。用户安装的应用会自动从 GitHub Releases 检查更新。
+> 📖 **注意**：发布更新是开发者操作，用户无需关心。用户安装的应用会自动从其下载来源平台检查更新。
 
 ## 📝 更新日志
 

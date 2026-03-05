@@ -982,6 +982,9 @@ function openSyncConfig() {
             await selectRepo(state.currentRepo);
         }
     });
+
+    // 同步配置弹窗：外层不滚动，内部卡片独立滚动
+    document.getElementById('modal-content')?.classList.add('modal-content--sync');
     
     // 设置主仓库选择变化时，自动从从仓库列表中移除主仓库
     setTimeout(() => {
@@ -1016,7 +1019,7 @@ function updateSubordinateReposList() {
             return !groupedRepos.has(r.name);
         })
         .map(r => `
-            <label style="display: block; margin-bottom: 8px;">
+            <label class="sync-check-item">
                 <input type="checkbox" value="${r.name}" class="form-checkbox">
                 <span>${r.name}</span>
             </label>
@@ -1034,52 +1037,67 @@ function createSyncConfigContent() {
         }
     });
     
-    let html = `
-        <div class="form-group">
-            <label class="form-label">主仓库</label>
-            <select class="form-select" id="sync-main-repo">
-                <option value="">选择主仓库</option>
-                ${state.repos.map(r => `
-                    <option value="${r.name}" ${!groupedRepos.has(r.name) ? '' : 'disabled'} ${!groupedRepos.has(r.name) ? '' : 'title="已在其他同步组中"'}>
-                        ${r.name}${groupedRepos.has(r.name) ? ' (已在同步组中)' : ''}
-                    </option>
-                `).join('')}
-            </select>
-        </div>
-        <div class="form-group">
-            <label class="form-label">从仓库（可多选）</label>
-            <div id="sync-subordinate-repos" style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 6px; padding: 10px;">
-                ${state.repos.map(r => {
-                    // 过滤掉已在同步组中的仓库
-                    if (groupedRepos.has(r.name)) {
-                        return `
-                            <label style="display: block; margin-bottom: 8px; opacity: 0.6;">
-                                <input type="checkbox" value="${r.name}" class="form-checkbox" disabled>
-                                <span>${r.name} (已在同步组中)</span>
-                            </label>
-                        `;
-                    }
-                    return `
-                        <label style="display: block; margin-bottom: 8px;">
-                            <input type="checkbox" value="${r.name}" class="form-checkbox">
-                            <span>${r.name}</span>
-                        </label>
-                    `;
-                }).join('')}
-            </div>
-        </div>
-        <div class="form-group">
-            <button class="btn btn-primary" onclick="saveSyncGroup()">保存同步组</button>
-            <button class="btn btn-secondary" onclick="clearSyncGroups()" style="margin-left: 10px;">清空所有同步组</button>
-        </div>
-        <div class="form-group">
-            <label class="form-label">当前同步组</label>
-            <div id="sync-groups-list" style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 6px; padding: 10px;">
-                ${renderSyncGroups()}
+    return `
+        <div class="sync-config">
+            <div class="sync-config-grid">
+                <div class="sync-card">
+                    <div class="sync-card-header">同步设置</div>
+                    <div class="sync-card-body">
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label class="form-label">主仓库</label>
+                            <select class="form-select" id="sync-main-repo">
+                                <option value="">选择主仓库</option>
+                                ${state.repos.map(r => `
+                                    <option value="${r.name}" ${!groupedRepos.has(r.name) ? '' : 'disabled'} ${!groupedRepos.has(r.name) ? '' : 'title="已在其他同步组中"'}>
+                                        ${r.name}${groupedRepos.has(r.name) ? ' (已在同步组中)' : ''}
+                                    </option>
+                                `).join('')}
+                            </select>
+                        </div>
+
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <div class="sync-row">
+                                <label class="form-label" style="margin: 0;">从仓库（可多选）</label>
+                                <div class="sync-actions">
+                                    <button class="btn btn-primary" type="button" onclick="saveSyncGroup()">保存</button>
+                                    <button class="btn btn-secondary" type="button" onclick="clearSyncGroups()">清空</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="sync-subordinate-repos" class="sync-scroll">
+                            ${state.repos.map(r => {
+                                // 过滤掉已在同步组中的仓库
+                                if (groupedRepos.has(r.name)) {
+                                    return `
+                                        <label class="sync-check-item sync-check-item--disabled">
+                                            <input type="checkbox" value="${r.name}" class="form-checkbox" disabled>
+                                            <span>${r.name} (已在同步组中)</span>
+                                        </label>
+                                    `;
+                                }
+                                return `
+                                    <label class="sync-check-item">
+                                        <input type="checkbox" value="${r.name}" class="form-checkbox">
+                                        <span>${r.name}</span>
+                                    </label>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="sync-card">
+                    <div class="sync-card-header">当前同步组</div>
+                    <div class="sync-card-body">
+                        <div id="sync-groups-list" class="sync-scroll">
+                            ${renderSyncGroups()}
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     `;
-    return html;
 }
 
 // 渲染同步组列表
@@ -1090,10 +1108,12 @@ function renderSyncGroups() {
     }
     
     return Object.entries(groups).map(([groupId, group]) => `
-        <div style="padding: 10px; margin-bottom: 10px; background: var(--bg-tertiary); border-radius: 6px;">
+        <div class="sync-group-item">
             <div><strong>主仓库:</strong> ${group.main}</div>
             <div><strong>从仓库:</strong> ${group.subordinates?.join(', ') || '无'}</div>
-            <button class="btn btn-danger" style="margin-top: 8px; padding: 5px 10px; font-size: 12px;" onclick="removeSyncGroup('${groupId}')">删除</button>
+            <div class="sync-group-actions">
+                <button class="btn btn-danger" type="button" onclick="removeSyncGroup('${groupId}')">删除</button>
+            </div>
         </div>
     `).join('');
 }
@@ -1411,6 +1431,7 @@ function showHelp() {
 function showModal(title, content, onConfirm, showCancel = true, options = {}) {
     const overlay = document.getElementById('modal-overlay');
     const modalContent = document.getElementById('modal-content');
+    modalContent.classList.remove('modal-content--sync');
     const primaryLabel = options.primaryLabel ?? (onConfirm ? '确定' : '关闭');
     const cancelLabel = options.cancelLabel ?? '取消';
 
@@ -1467,6 +1488,7 @@ function showModal(title, content, onConfirm, showCancel = true, options = {}) {
 // 关闭模态框
 window.closeModal = function() {
     document.getElementById('modal-overlay').style.display = 'none';
+    document.getElementById('modal-content')?.classList.remove('modal-content--sync');
     window.confirmModal = null;
 };
 

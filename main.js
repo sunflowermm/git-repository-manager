@@ -614,42 +614,103 @@ ipcMain.handle('git-commit', async (event, repoPath, message) => {
   }
 });
 
-async function withGitEnv(config, fn) {
-  try {
-    if (config) setupGitEnvironment(config);
-    return await fn();
-  } finally {
-    clearGitEnvironment();
+function buildGitEnvOverrides(config) {
+  if (!config || typeof config !== 'object') return {};
+  const env = {};
+
+  if (config.auth_type === 'ssh' && config.ssh_key_path) {
+    let sshKey = config.ssh_key_path;
+    if (sshKey.endsWith('.pub')) sshKey = sshKey.slice(0, -4);
+    if (fs.existsSync(sshKey)) {
+      env.GIT_SSH_COMMAND = process.platform === 'win32'
+        ? `ssh -i "${sshKey}" -o StrictHostKeyChecking=no`
+        : `ssh -i ${sshKey} -o StrictHostKeyChecking=no`;
+    }
   }
+
+  if (config.use_proxy && config.proxy_url) {
+    const proxy = String(config.proxy_url);
+    const normalized = proxy.startsWith('http://') || proxy.startsWith('https://')
+      ? proxy
+      : `http://${proxy}`;
+    env.HTTP_PROXY = normalized;
+    env.HTTPS_PROXY = normalized;
+    env.http_proxy = normalized;
+    env.https_proxy = normalized;
+  }
+
+  return env;
+}
+
+function runGitCommand(repoPath, args, envOverrides = {}) {
+  return new Promise((resolve) => {
+    const child = spawn('git', args, {
+      cwd: repoPath || undefined,
+      shell: true,
+      env: { ...process.env, ...(envOverrides || {}) }
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (d) => { stdout += d.toString(); });
+    child.stderr.on('data', (d) => { stderr += d.toString(); });
+    child.on('close', (code) => {
+      resolve({
+        success: code === 0,
+        stdout,
+        stderr,
+        code
+      });
+    });
+    child.on('error', (error) => {
+      resolve({ success: false, error: error.message, stdout, stderr });
+    });
+  });
 }
 
 ipcMain.handle('git-push', async (event, repoPath, remote = 'origin', branch = null, config = null) => {
-  return withGitEnv(config, async () => {
+  try {
     const git = simpleGit(repoPath);
     const branches = await git.branchLocal();
     const targetBranch = branch || branches.current;
-    await git.push(remote, targetBranch);
+    const envOverrides = buildGitEnvOverrides(config);
+    const result = await runGitCommand(repoPath, ['push', remote, targetBranch], envOverrides);
+    if (!result.success) throw new Error(result.stderr || result.error || 'git push 失败');
     return { success: true };
-  }).catch(error => ({ success: false, error: error.message }));
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 });
 
 ipcMain.handle('git-pull', async (event, repoPath, remote = 'origin', branch = null, config = null) => {
-  return withGitEnv(config, async () => {
+  try {
     const git = simpleGit(repoPath);
     const branches = await git.branchLocal();
     const targetBranch = branch || branches.current;
-    await git.pull(remote, targetBranch);
+    const envOverrides = buildGitEnvOverrides(config);
+    const result = await runGitCommand(repoPath, ['pull', remote, targetBranch], envOverrides);
+    if (!result.success) throw new Error(result.stderr || result.error || 'git pull 失败');
     return { success: true };
-  }).catch(error => ({ success: false, error: error.message }));
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 });
 
 ipcMain.handle('git-clone', async (event, url, targetPath, options = {}, config = null) => {
-  return withGitEnv(config, async () => {
+  try {
     if (config) url = processRemoteUrl(url, config);
-    const git = simpleGit();
-    await git.clone(url, targetPath, options);
+    const envOverrides = buildGitEnvOverrides(config);
+    const args = ['clone', url, targetPath];
+    if (options && typeof options === 'object') {
+      // 保留扩展点：如需传入 --depth 等，可在此映射
+    }
+    const result = await runGitCommand(rootDir, args, envOverrides);
+    if (!result.success) throw new Error(result.stderr || result.error || 'git clone 失败');
     return { success: true };
-  }).catch(error => ({ success: false, error: error.message }));
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 });
 
 ipcMain.handle('git-stash-list', async (event, repoPath) => {
@@ -683,39 +744,7 @@ ipcMain.handle('git-stash-pop', async (event, repoPath) => {
 });
 
 ipcMain.handle('exec-git', async (event, repoPath, command, args = []) => {
-  return new Promise((resolve) => {
-    const gitProcess = spawn('git', [command, ...args], {
-      cwd: repoPath,
-      shell: true
-    });
-    
-    let stdout = '';
-    let stderr = '';
-    
-    gitProcess.stdout.on('data', (data) => {
-      stdout += data.toString();
-    });
-    
-    gitProcess.stderr.on('data', (data) => {
-      stderr += data.toString();
-    });
-    
-    gitProcess.on('close', (code) => {
-      resolve({
-        success: code === 0,
-        stdout: stdout,
-        stderr: stderr,
-        code: code
-      });
-    });
-    
-    gitProcess.on('error', (error) => {
-      resolve({
-        success: false,
-        error: error.message
-      });
-    });
-  });
+  return runGitCommand(repoPath, [command, ...(args || [])]);
 });
 
 const SYNC_IGNORE = new Set([
@@ -787,14 +816,16 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinateRepoPath, co
     const fullMessage = commitMessage + summary + lineChanges;
     await mainGit.commit(fullMessage);
 
-    await withGitEnv(mainConfig, async () => {
-      await mainGit.push('origin');
-    });
+    {
+      const envOverrides = buildGitEnvOverrides(mainConfig);
+      const pushRes = await runGitCommand(mainRepoPath, ['push', 'origin'], envOverrides);
+      if (!pushRes.success) throw new Error(pushRes.stderr || pushRes.error || '主仓库 push 失败');
+    }
 
     if (sameRemote) {
-      await withGitEnv(subConfig, async () => {
-        await subGit.pull('origin');
-      });
+      const envOverrides = buildGitEnvOverrides(subConfig);
+      const pullRes = await runGitCommand(subordinateRepoPath, ['pull', 'origin'], envOverrides);
+      if (!pullRes.success) throw new Error(pullRes.stderr || pullRes.error || '从仓库 pull 失败');
       return { success: true };
     }
 
@@ -833,9 +864,11 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinateRepoPath, co
     await subGit.addConfig('user.email', userConfig.email, false);
     await subGit.commit(fullMessage);
 
-    await withGitEnv(subConfig, async () => {
-      await subGit.push('origin');
-    });
+    {
+      const envOverrides = buildGitEnvOverrides(subConfig);
+      const pushRes = await runGitCommand(subordinateRepoPath, ['push', 'origin'], envOverrides);
+      if (!pushRes.success) throw new Error(pushRes.stderr || pushRes.error || '从仓库 push 失败');
+    }
 
     return { success: true };
   } catch (error) {
@@ -854,42 +887,8 @@ ipcMain.handle('check-git', async () => {
   });
 });
 
-function setupGitEnvironment(config) {
-  if (config.auth_type === 'ssh' && config.ssh_key_path) {
-    let sshKey = config.ssh_key_path;
-    if (sshKey.endsWith('.pub')) sshKey = sshKey.slice(0, -4);
-    
-    if (fs.existsSync(sshKey)) {
-      const sshCommand = process.platform === 'win32' 
-        ? `ssh -i "${sshKey}" -o StrictHostKeyChecking=no`
-        : `ssh -i ${sshKey} -o StrictHostKeyChecking=no`;
-      process.env.GIT_SSH_COMMAND = sshCommand;
-    }
-  }
-  
-  if (config.use_proxy && config.proxy_url) {
-    const proxy = config.proxy_url;
-    if (!proxy.startsWith('http://') && !proxy.startsWith('https://')) {
-      process.env.HTTP_PROXY = `http://${proxy}`;
-      process.env.HTTPS_PROXY = `http://${proxy}`;
-    } else {
-      process.env.HTTP_PROXY = proxy;
-      process.env.HTTPS_PROXY = proxy;
-    }
-  }
-  
-  if (config.username && config.email) {
-    const git = simpleGit();
-    git.addConfig('user.name', config.username);
-    git.addConfig('user.email', config.email);
-  }
-}
-
-function clearGitEnvironment() {
-  ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'GIT_SSH_COMMAND'].forEach(key => {
-    delete process.env[key];
-  });
-}
+// 注意：不要修改 process.env（并发操作会互相覆盖）。
+// 统一使用 buildGitEnvOverrides + runGitCommand 为每次 git 调用注入独立环境变量。
 
 function processRemoteUrl(url, config) {
   if (!url || !config) return url;

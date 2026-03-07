@@ -58,3 +58,6 @@ Desktop.ini
 .env
 .env.local
 .env.*.local
+
+# 发布时生成的更新配置（generic 平台拉取 releaseNotes 用）
+update-config.json

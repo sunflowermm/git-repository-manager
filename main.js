@@ -157,15 +157,28 @@ function checkForUpdatesWithTimeout() {
       isCheckingUpdate = false;
     };
 
-    const onUpdateAvailable = (info) => {
+    const onUpdateAvailable = async (info) => {
       if (resolved) return;
       sendUpdateLog(`更新: 发现新版本 v${info.version}`, 'info');
+      let releaseNotes = info.releaseNotes;
+      if (!releaseNotes || (typeof releaseNotes === 'string' && !releaseNotes.trim())) {
+        try {
+          const configPath = path.join(app.getAppPath(), 'update-config.json');
+          if (fs.existsSync(configPath)) {
+            const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+            if (config?.baseUrl) {
+              const res = await fetch(config.baseUrl + 'releaseNotes.md');
+              if (res?.ok) releaseNotes = await res.text();
+            }
+          }
+        } catch (e) {}
+      }
       cleanup();
       removeListeners();
       sendUpdateStatus('available', {
         message: `发现新版本 v${info.version}`,
         version: info.version,
-        releaseNotes: info.releaseNotes
+        releaseNotes: releaseNotes || ''
       });
       resolve(info);
     };
@@ -861,7 +874,7 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinates, commitMes
         const sameRemote = mainRemoteUrl && subRemoteUrl && mainRemoteUrl === subRemoteUrl;
 
         if (sameRemote) {
-          const subEnv = buildGitEnvOverrides(subConfig);
+          const subEnv = buildGitEnvOverrides(subConfig || mainConfig);
           const pullRes = await runGitCommand(subPath, ['pull', 'origin'], subEnv);
           if (!pullRes.success) throw new Error(pullRes.stderr || pullRes.error || '从仓库 pull 失败');
           results.push({ path: subPath, success: true });
@@ -903,13 +916,14 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinates, commitMes
         await subGit.addConfig('user.email', userConfig.email, false);
         await subGit.commit(fullMessage);
 
-        const subEnv = buildGitEnvOverrides(subConfig);
+        const subEnv = buildGitEnvOverrides(subConfig || mainConfig);
         const subPushRes = await runGitCommand(subPath, ['push', 'origin'], subEnv);
         if (!subPushRes.success) throw new Error(subPushRes.stderr || subPushRes.error || '从仓库 push 失败');
 
         results.push({ path: subPath, success: true });
       } catch (subErr) {
-        results.push({ path: subPath, success: false, error: subErr?.message || String(subErr) });
+        const errMsg = subErr?.message ?? String(subErr);
+        results.push({ path: subPath, success: false, error: errMsg });
       }
     }
 
@@ -917,10 +931,10 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinates, commitMes
     return {
       success: allOk,
       error: allOk ? undefined : results.find(r => !r.success)?.error,
-      results
+      results  // 与 subList 顺序一致，便于前端按索引对应从仓名称
     };
   } catch (error) {
-    return { success: false, error: error.message };
+    return { success: false, error: error?.message || String(error) };
   }
 });
 

@@ -222,7 +222,6 @@ body {
 }
 
 .btn:hover {
-    transform: translateY(-2px);
     box-shadow: 0 6px 16px var(--shadow);
 }
 
@@ -231,8 +230,7 @@ body {
 }
 
 .btn:active {
-    transform: translateY(0);
-    transition: transform var(--transition-fast) ease;
+    box-shadow: 0 2px 8px var(--shadow);
 }
 
 .btn-primary {
@@ -296,7 +294,6 @@ body {
     background: linear-gradient(135deg, #FFA500 0%, #FF8C00 100%);
     border-color: #FF7F00;
     box-shadow: 0 4px 12px rgba(255, 165, 0, 0.5);
-    transform: translateY(-2px);
 }
 
 [data-theme="dark"] #btn-theme {
@@ -310,7 +307,6 @@ body {
     background: linear-gradient(135deg, #16213e 0%, #0f1626 100%);
     border-color: #5BA3F5;
     box-shadow: 0 4px 12px var(--shadow);
-    transform: translateY(-2px);
 }
 
 #theme-icon {
@@ -322,7 +318,7 @@ body {
 }
 
 #btn-theme:hover #theme-icon {
-    transform: rotate(20deg) scale(1.15);
+    transform: rotate(15deg);
 }
 
 .btn-success,
@@ -449,8 +445,6 @@ select {
     outline: none;
     border-color: var(--primary);
     box-shadow: 0 0 0 3px var(--shadow);
-    transform: translateY(-1px);
-    transition: all var(--transition-normal) ease;
 }
 
 /* 仓库列表 */
@@ -478,9 +472,9 @@ select {
     justify-content: space-between;
     gap: 8px;
     -webkit-app-region: no-drag;
-    transition: transform var(--transition-normal) cubic-bezier(0.25, 0.46, 0.45, 0.94),
+    transition: transform var(--transition-normal) ease,
                 opacity var(--transition-normal) ease,
-                box-shadow var(--transition-normal) cubic-bezier(0.25, 0.46, 0.45, 0.94),
+                box-shadow var(--transition-normal) ease,
                 background var(--transition-theme) cubic-bezier(0.4, 0, 0.2, 1),
                 border-color var(--transition-theme) cubic-bezier(0.4, 0, 0.2, 1),
                 border-style 0.15s ease;
@@ -501,7 +495,7 @@ select {
     cursor: grab;
     user-select: none;
     opacity: 0.4;
-    transition: opacity var(--transition-normal), color var(--transition-normal), transform var(--transition-fast);
+    transition: opacity var(--transition-normal), color var(--transition-normal), background var(--transition-fast);
     -webkit-app-region: no-drag;
     display: flex;
     align-items: center;
@@ -515,7 +509,6 @@ select {
     opacity: 0.9;
     color: var(--primary);
     background: rgba(13, 148, 136, 0.1);
-    transform: scale(1.1);
 }
 
 [data-theme="dark"] .repo-drag-handle:hover {
@@ -525,7 +518,6 @@ select {
 .repo-drag-handle:active {
     cursor: grabbing;
     opacity: 1;
-    transform: scale(1.05);
 }
 
 .repo-item:not(.active):hover .repo-drag-handle {
@@ -629,11 +621,10 @@ select {
     transition: transform var(--transition-normal) ease;
 }
 
-/* 未选中项 hover：轻微右移 + 边框高亮 */
+/* 未选中项 hover：仅边框与左侧竖条高亮，不位移避免光标抖动 */
 .repo-item:not(.active):not(.dragging):hover {
     background: var(--bg-secondary);
     border-color: var(--primary);
-    transform: translateX(4px);
     box-shadow: 0 4px 12px var(--shadow);
 }
 
@@ -645,14 +636,13 @@ select {
     transform: scaleY(1);
 }
 
-/* 选中项：始终保持主题色背景，hover 不覆盖 */
+/* 选中项：主题色背景，不位移保持稳定 */
 .repo-item.active {
     background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
     color: #fff;
     border-color: var(--primary);
     font-weight: 500;
     box-shadow: 0 4px 16px rgba(13, 148, 136, 0.3);
-    transform: translateX(2px);
 }
 
 .repo-item.active:hover {
@@ -750,14 +740,12 @@ select {
     border-radius: 4px;
     font-size: 12px;
     border: 1px solid transparent;
-    transition: all var(--transition-normal) ease;
-    will-change: transform, background-color, border-color;
+    transition: background var(--transition-normal) ease, border-color var(--transition-normal) ease;
 }
 
 .info-item:hover {
     background: var(--bg-secondary);
     border-color: var(--primary);
-    transform: translateX(4px);
 }
 
 .info-label {
@@ -822,11 +810,10 @@ select {
     font-size: 12px;
     font-family: 'Consolas', 'Monaco', monospace;
     border-radius: 4px;
-    transition: all var(--transition-normal) ease;
+    transition: background var(--transition-normal) ease, border-color var(--transition-normal) ease, box-shadow var(--transition-normal) ease;
     background: var(--bg-tertiary);
     border: 1px solid transparent;
     cursor: default;
-    will-change: transform, background-color, border-color;
 }
 
 .change-item:last-child {
@@ -836,7 +823,6 @@ select {
 .change-item:hover {
     background: var(--bg-card);
     border-color: var(--primary);
-    transform: translateX(4px);
     box-shadow: 0 2px 6px var(--shadow);
 }
 
@@ -1246,8 +1232,6 @@ select {
     outline: none;
     border-color: var(--primary);
     box-shadow: 0 0 0 3px var(--shadow);
-    transform: translateY(-1px);
-    transition: all var(--transition-normal) ease;
 }
 
 .form-checkbox {

@@ -843,15 +843,8 @@ async function commitAndSync() {
     try {
         const config = getRepoConfigFor(mainRepo);
         
-        // 提交并推送主仓库
-        await executeCommit(mainRepoPath, message, config);
-        const pushResult = await ipcRenderer.invoke('git-push', mainRepoPath, 'origin', null, config);
-        if (!pushResult.success) throw new Error(pushResult.error);
-        
-        logRepo(mainRepoName, '主仓库推送成功，开始同步到从仓库...', 'success');
-        
-        // 同步到从仓库
-        const syncResults = [];
+        // 构建从仓库列表 [{path, config}]
+        const subList = [];
         for (const subName of subordinates) {
             const subRepo = state.repos.find(r => r.name === subName);
             const subPath = subRepo ? subRepo.path : null;
@@ -861,24 +854,31 @@ async function commitAndSync() {
             }
             const subPlatform = subRepo ? subRepo.platform : 'GitHub';
             let subConfig = sanitizeConfig(state.platformConfig[subPlatform] || {});
-            
-            // 如果从仓库配置缺少用户信息，使用主仓库配置
             if ((!subConfig.username || !subConfig.email) && config.username && config.email) {
                 subConfig = { ...subConfig, username: config.username, email: config.email };
             }
-            
-            const syncResult = await ipcRenderer.invoke('sync-repos', mainRepoPath, subPath, message, config, subConfig);
-            if (!syncResult.success) {
-                logRepo(subName, `同步失败: ${syncResult.error}`, 'error');
-                syncResults.push({ name: subName, success: false, error: syncResult.error });
-            } else {
-                logRepo(subName, '同步成功', 'success');
-                syncResults.push({ name: subName, success: true });
-            }
+            subList.push({ path: subPath, config: subConfig });
         }
         
+        if (subList.length === 0) {
+            logRepo(mainRepoName, '没有可同步的从仓库', 'warning');
+            return;
+        }
+        
+        // 统一由 sync-repos 做主仓提交（含行数统计），再同步到各从仓，保证 Gitee/GitCode 显示完整文案
+        const syncResult = await ipcRenderer.invoke('sync-repos', mainRepoPath, subList, message, config);
+        
+        if (!syncResult.success) {
+            throw new Error(syncResult.error || '同步失败');
+        }
+        
+        const syncResults = (syncResult.results || []).map(r => ({
+            name: subordinates.find(n => state.repos.some(repo => repo.name === n && repo.path === r.path)) || r.path,
+            success: r.success,
+            error: r.error
+        }));
         const successCount = syncResults.filter(r => r.success).length;
-        const failCount = syncResults.length - successCount;
+        const failCount = syncResults.filter(r => !r.success).length;
         
         if (failCount === 0) {
             logRepo(mainRepoName, '同步完成！', 'success');

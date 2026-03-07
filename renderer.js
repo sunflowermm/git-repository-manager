@@ -516,42 +516,43 @@ function updateRepoInfo(repoInfo) {
     if (repoInfo.status) renderChanges(repoInfo.status);
 }
 
-// 渲染文件变更列表
+// 文件变更类型：与 main 进程 COMMIT_EMOJI 一致，根据 index/working_dir 归一化判断
+const FILE_CHANGE = { added: { icon: '➕', label: '新增' }, modified: { icon: '✏️', label: '修改' }, deleted: { icon: '🗑️', label: '删除' }, renamed: { icon: '🔄', label: '重命名' }, unknown: { icon: '📄', label: '' } };
+function getFileChangeType(file) {
+    const idx = String(file.index ?? '').trim();
+    const wrk = String(file.working_dir ?? '').trim();
+    if (idx === 'D' || wrk === 'D') return FILE_CHANGE.deleted;
+    if (idx === 'R' || wrk === 'R' || idx.includes('R') || wrk.includes('R')) return FILE_CHANGE.renamed;
+    if (idx === 'A' || wrk === '?' || wrk === '??') return FILE_CHANGE.added;
+    if (idx === 'M' || wrk === 'M') return FILE_CHANGE.modified;
+    return FILE_CHANGE.unknown;
+}
+
 function renderChanges(status) {
     if (!elements.changesList) return;
-    
     elements.changesList.innerHTML = '';
-    
-    if (!status || !status.files || status.files.length === 0) {
+    if (!status?.files?.length) {
         const emptyState = document.createElement('div');
         emptyState.className = 'empty-state';
         emptyState.textContent = '暂无变更';
         elements.changesList.appendChild(emptyState);
         return;
     }
-    
-    // 使用DocumentFragment优化性能
     const fragment = document.createDocumentFragment();
-    
     status.files.forEach(file => {
+        const { icon, label } = getFileChangeType(file);
         const item = document.createElement('div');
         item.className = 'change-item';
-        
-        let icon = '📄';
-        const statusType = file.index || file.working_dir || '';
-        if (statusType === 'A' || statusType === '??') icon = '➕';
-        else if (statusType === 'M' || statusType === ' M') icon = '✏️';
-        else if (statusType === 'D' || statusType === ' D') icon = '🗑️';
-        else if (statusType === 'R' || statusType === ' R') icon = '🔄';
-        
-        item.innerHTML = `
-            <span class="change-icon">${icon}</span>
-            <span class="change-path">${file.path}</span>
-        `;
+        item.innerHTML = `<span class="change-icon" title="${label}">${icon}</span><span class="change-path">${escapeHtml(file.path || '')}</span>`;
         fragment.appendChild(item);
     });
-    
     elements.changesList.appendChild(fragment);
+}
+
+function escapeHtml(s) {
+    const div = document.createElement('div');
+    div.textContent = s;
+    return div.innerHTML;
 }
 
 // 检查是否已选择仓库

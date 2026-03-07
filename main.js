@@ -258,11 +258,13 @@ autoUpdater.on('download-progress', (progressObj) => {
     const percent = Math.max(0, Math.min(100, progressObj.percent || 0));
     const transferred = progressObj.transferred || 0;
     const total = progressObj.total || 0;
-    sendUpdateLog(`更新: 下载进度 ${Math.round(percent)}% (${transferred}/${total})`, 'info');
+    const bytesPerSecond = progressObj.bytesPerSecond || 0;
+    sendUpdateLog(`更新: 下载进度 ${Math.round(percent)}% (${transferred}/${total})${bytesPerSecond ? `，${bytesPerSecond} B/s` : ''}`, 'info');
     mainWindow.webContents.send('update-progress', {
       percent: Math.round(percent),
       transferred: transferred,
-      total: total
+      total: total,
+      bytesPerSecond: bytesPerSecond
     });
   }
 });

@@ -1016,6 +1016,8 @@ select {
 
 /* 同步配置弹窗：禁用整体滚动，改为内部卡片各自滚动 */
 .modal-content--sync {
+    max-width: 900px;
+    width: 95%;
     overflow: hidden;
     display: flex;
     flex-direction: column;

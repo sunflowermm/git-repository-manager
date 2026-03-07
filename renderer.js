@@ -1487,6 +1487,7 @@ function showModal(title, content, onConfirm, showCancel = true, options = {}) {
     modalContent.classList.remove('modal-content--sync');
     const primaryLabel = options.primaryLabel ?? (onConfirm ? '确定' : '关闭');
     const cancelLabel = options.cancelLabel ?? '取消';
+    const closeOnOverlayClick = options.closeOnOverlayClick ?? true;
 
     let html = `<div class="modal-header">${title}</div><div class="modal-body">${content}</div><div class="modal-footer">`;
 
@@ -1528,8 +1529,9 @@ function showModal(title, content, onConfirm, showCancel = true, options = {}) {
     
     overlay.style.display = 'flex';
     
-    // 点击遮罩层关闭（只保留一个事件监听器）
+    // 点击遮罩层关闭（可配置是否启用）
     const closeOnOverlay = (e) => {
+        if (!closeOnOverlayClick) return;
         if (e.target === overlay) {
             closeModal();
             overlay.removeEventListener('click', closeOnOverlay);
@@ -1997,9 +1999,6 @@ function handleUpdateStatus(data) {
     const status = data.status;
     const { message, version, releaseNotes } = data;
     log(`更新: 收到状态 ${String(status ?? '(未知)')}`, 'info');
-    if (status === undefined || status === null) {
-        log(`更新: 调试 data.keys=${Object.keys(data).join(',')}`, 'info');
-    }
     switch (status) {
         case 'available':
             log(`检查完成：发现新版本 v${version}`, 'info');
@@ -2039,17 +2038,20 @@ function handleUpdateProgress(_, progress) {
     const pct = Math.max(0, Math.min(100, progress.percent || 0));
     const transferred = Number(progress.transferred) || 0;
     const total = Number(progress.total) || 0;
+    const bytesPerSecond = Number(progress.bytesPerSecond) || 0;
 
     // 添加平滑过渡动画
     bar.style.transition = 'width 0.3s ease-out';
     bar.style.width = `${pct}%`;
     
     // 改进进度文本显示
-    if (total > 0) {
-        const speed = progress.bytesPerSecond ? formatBytes(progress.bytesPerSecond) + '/s' : '';
-        text.textContent = `${pct}% (${formatBytes(transferred)}/${formatBytes(total)}) ${speed}`;
-    } else if (transferred > 0) {
-        text.textContent = `${pct}% (${formatBytes(transferred)})`;
+    const baseInfo = total > 0
+        ? `${pct}% (${formatBytes(transferred)}/${formatBytes(total)})`
+        : (transferred > 0 ? `${pct}% (${formatBytes(transferred)})` : `${pct}%`);
+    const speedInfo = bytesPerSecond > 0 ? `，速度 ${formatBytes(bytesPerSecond)}/s` : '';
+
+    if (total > 0 || transferred > 0) {
+        text.textContent = `${baseInfo}${speedInfo}`;
     } else {
         text.textContent = `${pct}% (准备中...)`;
     }
@@ -2063,14 +2065,14 @@ function handleUpdateProgress(_, progress) {
     // 记录关键进度点
     if (pct >= 100 && _lastLoggedProgressPct < 100) {
         _lastLoggedProgressPct = 100;
-        log('更新: 下载进度 100%', 'info');
+        log(`更新: 下载完成 100%（共 ${formatBytes(total)}）`, 'info');
     } else if (pct > 0 && _lastLoggedProgressPct === -1) {
-        log(`更新: 下载进度开始更新 (${pct}%)`, 'info');
         _lastLoggedProgressPct = 0;
+        log(`更新: 下载开始 ${baseInfo}${speedInfo}`, 'info');
     } else if (pct % 10 === 0 && pct > _lastLoggedProgressPct) {
-        // 每10%记录一次进度
+        // 每 10% 记录一次详细进度
         _lastLoggedProgressPct = pct;
-        log(`更新: 下载进度 ${pct}%`, 'info');
+        log(`更新: 下载进度 ${baseInfo}${speedInfo}`, 'info');
     }
 }
 
@@ -2159,7 +2161,7 @@ function showUpdateAvailableDialog(version, releaseNotes) {
         showUpdateProgressModal();
         requestAnimationFrame(() => { downloadUpdate(); });
         return false;
-    }, true, { primaryLabel: '安装', cancelLabel: '取消' });
+    }, true, { primaryLabel: '安装', cancelLabel: '取消', closeOnOverlayClick: false });
 }
 
 function showUpdateProgressModal() {
@@ -2175,7 +2177,7 @@ function showUpdateProgressModal() {
             <p id="update-progress-text" class="update-progress-text">准备中...</p>
         </div>
     `;
-    showModal('下载更新', html, null, false);
+    showModal('下载更新', html, null, false, { closeOnOverlayClick: false });
     
     // 重置进度状态
     _lastLoggedProgressPct = -1;
@@ -2202,7 +2204,7 @@ function showUpdateDownloadedDialog(version) {
             <p class="update-dialog-desc">点击「立即重启」应用更新，或选「稍后」在关闭/下次启动时自动安装。</p>
         </div>
     `;
-    showModal('更新已就绪', content, () => installUpdate(), true, { primaryLabel: '立即重启', cancelLabel: '稍后' });
+    showModal('更新已就绪', content, () => installUpdate(), true, { primaryLabel: '立即重启', cancelLabel: '稍后', closeOnOverlayClick: false });
 }
 
 async function clearUpdateCache() {
@@ -2249,7 +2251,7 @@ async function downloadUpdate() {
     _lastLoggedProgressPct = -1;
     log('更新: 开始下载', 'info');
     
-    // 设置超时：如果30秒内没有收到任何进度更新，提示用户
+    // 设置超时：如果数秒内没有收到任何进度更新，提示用户
     _progressUpdateTimer = setTimeout(() => {
         const bar = document.getElementById('update-progress-bar');
         const text = document.getElementById('update-progress-text');

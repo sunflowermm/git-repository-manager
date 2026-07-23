@@ -659,6 +659,12 @@ ipcMain.handle('get-repo-info', async (event, repoPath) => {
       }
     } catch (e) {}
     
+    let insertions = 0;
+    let deletions = 0;
+    try {
+      ({ insertions, deletions } = await getWorkingTreeLineChanges(git, repoPath, { files: info.files }));
+    } catch (_) {}
+
     return {
       name,
       path: repoPath,
@@ -671,7 +677,9 @@ ipcMain.handle('get-repo-info', async (event, repoPath) => {
         untracked: info.untracked,
         deleted: info.deleted,
         renamed: info.renamed,
-        files: info.files
+        files: info.files,
+        insertions,
+        deletions
       },
       lastCommit
     };
@@ -743,29 +751,77 @@ function stripAutoCommitMeta(message) {
     .trim();
 }
 
+function parseNumstat(raw) {
+  let insertions = 0;
+  let deletions = 0;
+  for (const line of String(raw || '').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split(/\t/);
+    if (parts.length < 2) continue;
+    const ins = parts[0] === '-' ? 0 : parseInt(parts[0], 10);
+    const del = parts[1] === '-' ? 0 : parseInt(parts[1], 10);
+    if (!Number.isNaN(ins)) insertions += ins;
+    if (!Number.isNaN(del)) deletions += del;
+  }
+  return { insertions, deletions };
+}
+
+function countTextFileLines(filePath) {
+  try {
+    if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return 0;
+    const buf = fs.readFileSync(filePath);
+    if (buf.includes(0)) return 0;
+    const text = buf.toString('utf8');
+    if (!text) return 0;
+    const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const parts = normalized.split('\n');
+    return normalized.endsWith('\n') ? Math.max(parts.length - 1, 0) : parts.length;
+  } catch (_) {
+    return 0;
+  }
+}
+
 /** 从暂存区 numstat 统计增删行（含新增/删除文件） */
 async function getLineChangesFromCached(git) {
+  try {
+    return parseNumstat(await git.raw(['diff', '--cached', '--numstat']));
+  } catch (_) {
+    try {
+      const diff = await git.diffSummary(['--cached']);
+      return {
+        insertions: diff?.insertions || 0,
+        deletions: diff?.deletions || 0
+      };
+    } catch (_) {
+      return { insertions: 0, deletions: 0 };
+    }
+  }
+}
+
+/** 工作区相对 HEAD 的行数预览（含未跟踪新文件），用于默认提交信息 */
+async function getWorkingTreeLineChanges(git, repoPath, status) {
   let insertions = 0;
   let deletions = 0;
   try {
-    const raw = await git.raw(['diff', '--cached', '--numstat']);
-    for (const line of String(raw || '').split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      const parts = trimmed.split(/\t/);
-      if (parts.length < 2) continue;
-      const ins = parts[0] === '-' ? 0 : parseInt(parts[0], 10);
-      const del = parts[1] === '-' ? 0 : parseInt(parts[1], 10);
-      if (!Number.isNaN(ins)) insertions += ins;
-      if (!Number.isNaN(del)) deletions += del;
-    }
-  } catch (e) {
+    ({ insertions, deletions } = parseNumstat(await git.raw(['diff', 'HEAD', '--numstat'])));
+  } catch (_) {
     try {
-      const diff = await git.diffSummary(['--cached']);
-      if (diff && typeof diff.insertions === 'number') insertions = diff.insertions;
-      if (diff && typeof diff.deletions === 'number') deletions = diff.deletions;
+      const unstaged = parseNumstat(await git.raw(['diff', '--numstat']));
+      const staged = parseNumstat(await git.raw(['diff', '--cached', '--numstat']));
+      insertions = unstaged.insertions + staged.insertions;
+      deletions = unstaged.deletions + staged.deletions;
     } catch (_) {}
   }
+
+  for (const f of status?.files || []) {
+    const wrk = String(f.working_dir ?? '').trim();
+    if (wrk !== '?' && wrk !== '??') continue;
+    const rel = String(f.path || '').trim();
+    if (!rel) continue;
+    insertions += countTextFileLines(path.join(repoPath, rel));
+  }
+
   return { insertions, deletions };
 }
 

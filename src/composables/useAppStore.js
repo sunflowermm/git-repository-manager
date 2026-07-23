@@ -56,7 +56,11 @@ function buildChangeSummaryFromStatus(status) {
   if (counts.added) parts.push(`${counts.added} 新增`);
   if (counts.deleted) parts.push(`${counts.deleted} 删除`);
   if (counts.renamed) parts.push(`${counts.renamed} 重命名`);
-  return parts.length ? ` [${parts.join(', ')}]` : '';
+  let summary = parts.length ? ` [${parts.join(', ')}]` : '';
+  const ins = Number(status.insertions) || 0;
+  const del = Number(status.deletions) || 0;
+  if (ins || del) summary += ` +${ins} -${del} 行`;
+  return summary;
 }
 
 function basenamePath(p) {

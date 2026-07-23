@@ -139,16 +139,16 @@ export function useAppStore() {
 
   async function saveConfig() {
     const config = {
-      repo_paths: state.repoPaths,
+      repo_paths: state.repoPaths.slice(),
       platform_configs: Object.fromEntries(
-        Object.entries(state.platformConfig).map(([k, v]) => [k, sanitizeConfig(v)])
+        Object.entries({ ...state.platformConfig }).map(([k, v]) => [k, sanitizeConfig(v)])
       ),
-      sync_config: state.syncConfig,
+      sync_config: JSON.parse(JSON.stringify(state.syncConfig || { sync_groups: {}, repo_to_group: {} })),
       theme: state.theme,
       autoRefreshEnabled: state.autoRefreshEnabled,
       autoRefreshInterval: state.autoRefreshInterval,
       update_proxy_port: state.updateProxyPort || '',
-      panel_sizes: state.panelSizes || undefined
+      panel_sizes: state.panelSizes ? [...state.panelSizes] : undefined
     };
     await invoke('save-config', config);
   }
@@ -215,7 +215,9 @@ export function useAppStore() {
     const previousPath = state.currentRepo?.path;
     const nonce = state.selectionNonce;
     try {
-      state.repos = await invoke('get-repos', state.repoPaths);
+      // 必须传纯数组，不能传 Vue Proxy（否则 IPC 报 An object could not be cloned）
+      const paths = state.repoPaths.slice();
+      state.repos = (await invoke('get-repos', paths)) || [];
       if (previousPath && nonce === state.selectionNonce) {
         const found = state.repos.find((r) => r.path === previousPath);
         if (found) state.currentRepo = found;
@@ -224,6 +226,7 @@ export function useAppStore() {
       if (!silent) log(`已加载 ${state.repos.length} 个仓库`, 'success');
     } catch (error) {
       if (!silent) log(`刷新失败: ${error.message}`, 'error');
+      else log(`刷新失败: ${error.message}`, 'error');
     } finally {
       state.isRefreshing = false;
     }

@@ -529,15 +529,21 @@ async function getRepoBasicInfo(git) {
   try { status = await git.status(); } catch (e) {}
 
   const counts = countChangeTypes(status);
+  const files = (status.files || []).map((f) => ({
+    path: String(f.path || ''),
+    index: String(f.index ?? ''),
+    working_dir: String(f.working_dir ?? ''),
+    from: f.from ? String(f.from) : undefined
+  }));
   return {
-    remoteUrl,
-    branch,
+    remoteUrl: String(remoteUrl || ''),
+    branch: String(branch || '无分支'),
     modified: counts.modified,
     staged: (status.staged || []).length,
     untracked: counts.added,
     deleted: counts.deleted,
     renamed: counts.renamed,
-    files: status.files || []
+    files
   };
 }
 

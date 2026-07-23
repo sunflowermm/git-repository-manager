@@ -17,14 +17,15 @@
 
 ```mermaid
 graph TB
-    A[Electron主进程] --> B[渲染进程UI]
+    A[Electron主进程] --> P[preload IPC桥]
+    P --> B[Vue3渲染层]
     A --> C[Git操作模块]
     A --> D[配置管理]
     A --> E[文件系统]
     
     B --> F[仓库列表]
-    B --> G[操作面板]
-    B --> H[配置面板]
+    B --> G[工作区]
+    B --> H[配置弹窗]
     
     C --> I[simple-git]
     C --> J[SSH认证]
@@ -32,11 +33,6 @@ graph TB
     
     D --> L[本地配置JSON]
     E --> M[仓库文件系统]
-    
-    style A fill:#4CAF50
-    style B fill:#2196F3
-    style C fill:#FF9800
-    style D fill:#9C27B0
 ```
 
 ## 🚀 快速开始
@@ -45,6 +41,19 @@ graph TB
 
 - **操作系统**：Windows 7+ / macOS 10.10+ / Linux
 - **Git**：已安装并配置（必需）
+- **开发**：Node.js 18+（仅源码开发需要）
+
+### 开发与打包
+
+```bash
+npm install
+npm run dev          # Vite 热更新 + Electron
+npm run build:ui     # 仅构建 Vue 渲染层到 ui-dist/
+npm run build        # 构建 UI 并打包安装包
+npm run publish      # 构建并发布多平台发行版
+```
+
+渲染层基于 **Vue 3 + Vite**，主进程仍为 Electron + simple-git。
 
 ## 📖 使用指南
 

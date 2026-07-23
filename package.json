@@ -1,15 +1,17 @@
 {
   "name": "git-manager-electron",
-  "version": "1.1.9",
+  "version": "1.2.0",
   "description": "🌻 向日葵Git仓库管理 - Electron版",
   "main": "main.js",
   "scripts": {
-    "start": "electron .",
-    "dev": "electron .",
-    "build": "electron-builder --publish=never",
-    "build:x64": "electron-builder --win --x64 --publish=never",
-    "build:ia32": "electron-builder --win --ia32 --publish=never",
-    "publish": "node publish.js"
+    "dev": "concurrently -k -n vite,electron -c cyan,magenta \"vite\" \"wait-on http://127.0.0.1:5173 && cross-env ELECTRON_DEV=1 electron .\"",
+    "dev:ui": "vite",
+    "build:ui": "vite build",
+    "start": "npm run build:ui && electron .",
+    "build": "npm run build:ui && electron-builder --publish=never",
+    "build:x64": "npm run build:ui && electron-builder --win --x64 --publish=never",
+    "build:ia32": "npm run build:ui && electron-builder --win --ia32 --publish=never",
+    "publish": "npm run build:ui && node publish.js"
   },
   "keywords": [
     "git",
@@ -21,13 +23,25 @@
   "license": "MIT",
   "devDependencies": {
     "@octokit/rest": "^20.0.2",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "concurrently": "^10.0.3",
+    "cross-env": "^10.1.0",
     "electron": "^30.0.0",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "vite": "^8.1.5",
+    "wait-on": "^9.1.0"
   },
   "dependencies": {
+    "dompurify": "^3.4.12",
     "dotenv": "^16.6.1",
     "electron-updater": "^6.1.7",
-    "simple-git": "^3.25.0"
+    "fuse.js": "^7.5.0",
+    "marked": "^18.0.7",
+    "notyf": "^3.10.0",
+    "simple-git": "^3.25.0",
+    "sortablejs": "^1.15.7",
+    "split.js": "^1.6.5",
+    "vue": "^3.5.40"
   },
   "build": {
     "appId": "com.sunflower.gitmanager",
@@ -37,7 +51,12 @@
       "output": "dist"
     },
     "files": [
-      "**/*",
+      "main.js",
+      "preload.js",
+      "update-config.json",
+      "ui-dist/**/*",
+      "assets/**/*",
+      "node_modules/**/*",
       "!node_modules/.bin/**/*",
       "!node_modules/**/test/**/*",
       "!node_modules/**/tests/**/*",
@@ -49,7 +68,12 @@
       "!node_modules/**/.git/**/*",
       "!node_modules/**/.github/**/*",
       "!dist/**/*",
-      "!history/**/*"
+      "!history/**/*",
+      "!src/**/*",
+      "!renderer.js",
+      "!styles.css",
+      "!index.html",
+      "!vite.config.js"
     ],
     "asarUnpack": [
       "node_modules/@kwsites/**/*"

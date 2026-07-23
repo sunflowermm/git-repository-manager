@@ -77,11 +77,13 @@ function createWindow() {
     fullscreenable: true,
     show: false,
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
     },
     icon: path.join(__dirname, 'assets', 'icon.ico'),
-    backgroundColor: '#f8fafc'
+    backgroundColor: '#f1f5f9'
   });
   
   mainWindow.once('ready-to-show', () => {
@@ -107,7 +109,13 @@ function createWindow() {
     mainWindow = null;
   });
 
-  mainWindow.loadFile('index.html');
+  const isDev = !app.isPackaged && process.env.ELECTRON_DEV === '1';
+  if (isDev) {
+    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173');
+    mainWindow.webContents.openDevTools({ mode: 'detach' });
+  } else {
+    mainWindow.loadFile(path.join(__dirname, 'ui-dist', 'index.html'));
+  }
 }
 
 autoUpdater.autoDownload = false;
@@ -395,6 +403,20 @@ ipcMain.handle('select-folder', async () => {
     properties: ['openDirectory']
   });
   return result.canceled ? null : result.filePaths[0];
+});
+
+ipcMain.handle('is-git-repo', async (_event, folderPath) => {
+  try {
+    if (!folderPath || !fs.existsSync(folderPath)) return { ok: false };
+    const gitPath = path.join(folderPath, '.git');
+    return { ok: fs.existsSync(gitPath) };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('join-path', async (_event, ...parts) => {
+  return path.join(...parts.filter((p) => typeof p === 'string'));
 });
 
 function getSshDir() {

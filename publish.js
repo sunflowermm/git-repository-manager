@@ -362,6 +362,34 @@ async function deleteExistingGiteeAttachments(platform, token, releaseId, fileNa
   }
 }
 
+async function pruneGiteeLatestInstallerAttachments(platform, token, releaseId) {
+  const base = `${platform.apiBase}/repos/${platform.owner}/${platform.repo}`;
+  const auth = `access_token=${encodeURIComponent(token)}`;
+  const listRes = await fetch(`${base}/releases/${releaseId}/attach_files?${auth}`);
+  if (!listRes.ok) {
+    console.warn('⚠️ 获取 Gitee latest 附件失败:', await listRes.text());
+    return;
+  }
+  const attachments = await listRes.json();
+  if (!Array.isArray(attachments)) return;
+
+  for (const attachment of attachments) {
+    const name = String(attachment.name || '');
+    // latest 标签会堆积历史安装包，容易打满 1GB 配额；发布前清掉安装包/元数据
+    const shouldRemove =
+      /\.exe$/i.test(name) ||
+      /\.blockmap$/i.test(name) ||
+      /^latest.*\.yml$/i.test(name) ||
+      name === 'releaseNotes.md';
+    if (!shouldRemove) continue;
+    const deleteRes = await fetch(`${base}/releases/${releaseId}/attach_files/${attachment.id}?${auth}`, {
+      method: 'DELETE'
+    });
+    if (deleteRes.ok) debug('已清理 Gitee latest 旧附件:', name);
+    else console.warn('⚠️ 清理 Gitee latest 附件失败:', name, await deleteRes.text());
+  }
+}
+
 async function uploadGiteeArtifacts(platform, token, releaseId) {
   const base = `${platform.apiBase}/repos/${platform.owner}/${platform.repo}`;
   const attachUrl = `${base}/releases/${releaseId}/attach_files`;
@@ -399,6 +427,8 @@ async function publishGitee(platform, releaseNotes) {
 
   const latestPlatform = { ...platform, releaseTag: 'latest' };
   const latestReleaseId = await ensureGiteeRelease(latestPlatform, token, releaseNotes || `v${version}`);
+  // 先清掉 latest 上堆积的旧安装包，避免附件配额打满导致新包上传失败
+  await pruneGiteeLatestInstallerAttachments(latestPlatform, token, latestReleaseId);
   await uploadGiteeArtifacts(latestPlatform, token, latestReleaseId);
   await pruneOldGiteeReleases(platform, token);
 }

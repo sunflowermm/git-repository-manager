@@ -19,13 +19,20 @@ function handleStatus(status, payload = {}) {
   const data = { status, ...payload };
   if (status === 'available') {
     log(`检查完成：发现新版本 v${data.version}`, 'info');
+    let notes = data.releaseNotes || '';
+    if (Array.isArray(notes)) {
+      notes = notes.map((n) => (typeof n === 'string' ? n : n?.note || '')).filter(Boolean).join('\n\n');
+    } else if (notes && typeof notes !== 'string') {
+      notes = String(notes);
+    }
     openModal({
       type: 'update-available',
       title: '发现新版本',
       version: data.version,
-      releaseNotes: data.releaseNotes || '',
+      releaseNotes: notes,
       closeOnOverlay: false
     });
+    showMessage(`发现新版本 v${data.version}`, 'info');
   } else if (status === 'not-available') {
     log('检查完成：已是最新版本', 'info');
     showMessage('已是最新版本', 'success');

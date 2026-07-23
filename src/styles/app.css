@@ -1757,10 +1757,15 @@ body::before {
 
 .title-bar,
 .app-container,
-.modal-overlay,
 .notyf {
     position: relative;
     z-index: 1;
+}
+
+/* 必须保持 fixed + 高层级，否则会被挤出 body(overflow:hidden) 看不到 */
+.modal-overlay {
+    position: fixed;
+    z-index: 10000;
 }
 
 .app-container {

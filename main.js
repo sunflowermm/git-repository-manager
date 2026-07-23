@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, screen, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { exec, spawn } = require('child_process');
@@ -114,6 +114,36 @@ autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
 
 const CHECK_TIMEOUT_MS = 30000;
+let isCheckingUpdate = false;
+let updateProxyActive = false;
+
+function loadAppConfig() {
+  try {
+    const p = getConfigPath();
+    if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf-8')) || {};
+  } catch (e) {}
+  return {};
+}
+
+function getUpdateProxyPort() {
+  const port = parseInt(loadAppConfig().update_proxy_port, 10);
+  return (port > 0 && port <= 65535) ? port : 0;
+}
+
+async function setUpdateProxyEnabled(enabled) {
+  const ses = session.defaultSession;
+  if (enabled) {
+    const port = getUpdateProxyPort();
+    if (!port) return false;
+    await ses.setProxy({ proxyRules: `http://127.0.0.1:${port}` });
+    updateProxyActive = true;
+    sendUpdateLog(`更新: 已启用本地代理 127.0.0.1:${port}`, 'info');
+    return true;
+  }
+  await ses.setProxy({ mode: 'system' });
+  updateProxyActive = false;
+  return true;
+}
 
 function sendUpdateStatus(status, payload = {}) {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -136,18 +166,16 @@ function formatErrorForLog(err) {
   return `[错误] ${msg}\n${lines.join('\n')}`;
 }
 
-let isCheckingUpdate = false;
-
 function checkForUpdatesWithTimeout() {
   if (isCheckingUpdate) {
     return Promise.reject(new Error('更新检查正在进行中，请勿重复调用'));
   }
-  
+
   return new Promise((resolve, reject) => {
     isCheckingUpdate = true;
     let timeoutId;
     let resolved = false;
-    
+
     const cleanup = () => {
       if (timeoutId) {
         clearTimeout(timeoutId);
@@ -155,6 +183,14 @@ function checkForUpdatesWithTimeout() {
       }
       resolved = true;
       isCheckingUpdate = false;
+    };
+
+    const removeListeners = () => {
+      try {
+        autoUpdater.removeAllListeners('update-available');
+        autoUpdater.removeAllListeners('update-not-available');
+        autoUpdater.removeAllListeners('error');
+      } catch (e) {}
     };
 
     const onUpdateAvailable = async (info) => {
@@ -194,30 +230,16 @@ function checkForUpdatesWithTimeout() {
 
     const onError = (err) => {
       if (resolved) return;
-      sendUpdateLog(formatErrorForLog(err), 'error');
       cleanup();
       removeListeners();
-      sendUpdateStatus('error', { message: err.message || '检查更新失败' });
       reject(err);
     };
 
-    const removeListeners = () => {
-      try {
-        autoUpdater.removeAllListeners('update-available');
-        autoUpdater.removeAllListeners('update-not-available');
-        autoUpdater.removeAllListeners('error');
-      } catch (e) {}
-    };
-
-    // 先清理所有之前的监听器，避免重复
     removeListeners();
-    
-    // 设置新的监听器（使用 once 确保只触发一次）
     autoUpdater.once('update-available', onUpdateAvailable);
     autoUpdater.once('update-not-available', onUpdateNotAvailable);
     autoUpdater.once('error', onError);
 
-    // 设置超时
     timeoutId = setTimeout(() => {
       if (resolved) return;
       cleanup();
@@ -225,7 +247,6 @@ function checkForUpdatesWithTimeout() {
       reject(new Error('检查更新超时，请检查网络'));
     }, CHECK_TIMEOUT_MS);
 
-    // 调用检查更新
     autoUpdater.checkForUpdates().catch((err) => {
       if (resolved) return;
       cleanup();
@@ -236,9 +257,21 @@ function checkForUpdatesWithTimeout() {
 }
 
 async function performUpdateCheck() {
-  sendUpdateLog('更新: 检查中', 'info');
-  await checkForUpdatesWithTimeout();
-  sendUpdateLog('更新: 检查完成', 'info');
+  sendUpdateLog('更新: 检查中（直连）', 'info');
+  try {
+    await checkForUpdatesWithTimeout();
+    sendUpdateLog('更新: 检查完成', 'info');
+    return;
+  } catch (err) {
+    const port = getUpdateProxyPort();
+    if (!port || updateProxyActive) throw err;
+    sendUpdateLog(`更新: 直连失败（${err.message || err}），尝试代理端口 ${port}`, 'warning');
+    const ok = await setUpdateProxyEnabled(true);
+    if (!ok) throw err;
+    sendUpdateLog('更新: 通过代理重新检查', 'info');
+    await checkForUpdatesWithTimeout();
+    sendUpdateLog('更新: 代理检查完成', 'info');
+  }
 }
 
 function doCheckForUpdates() {
@@ -251,8 +284,6 @@ function doCheckForUpdates() {
   });
 }
 
-// 全局事件监听器已移除，改为在 checkForUpdatesWithTimeout 中按需添加
-
 autoUpdater.on('download-progress', (progressObj) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     const percent = Math.max(0, Math.min(100, progressObj.percent || 0));
@@ -262,9 +293,9 @@ autoUpdater.on('download-progress', (progressObj) => {
     sendUpdateLog(`更新: 下载进度 ${Math.round(percent)}% (${transferred}/${total})${bytesPerSecond ? `，${bytesPerSecond} B/s` : ''}`, 'info');
     mainWindow.webContents.send('update-progress', {
       percent: Math.round(percent),
-      transferred: transferred,
-      total: total,
-      bytesPerSecond: bytesPerSecond
+      transferred,
+      total,
+      bytesPerSecond
     });
   }
 });
@@ -276,7 +307,6 @@ autoUpdater.on('update-downloaded', (info) => {
 
 app.whenReady().then(() => {
   createWindow();
-  // 初始化代理拦截器（但不立即启用，只在直连失败时启用）
   setImmediate(doCheckForUpdates);
 });
 
@@ -306,11 +336,26 @@ ipcMain.handle('check-for-updates', async () => {
 });
 
 ipcMain.handle('download-update', async () => {
-  try {
-    sendUpdateLog('更新: 开始下载', 'info');
+  const tryDownload = async () => {
+    sendUpdateLog(updateProxyActive ? '更新: 通过代理开始下载' : '更新: 开始下载', 'info');
     await autoUpdater.downloadUpdate();
+  };
+  try {
+    await tryDownload();
     return { success: true };
   } catch (e) {
+    const port = getUpdateProxyPort();
+    if (port && !updateProxyActive) {
+      sendUpdateLog(`更新: 下载直连失败，尝试代理端口 ${port}`, 'warning');
+      try {
+        await setUpdateProxyEnabled(true);
+        await tryDownload();
+        return { success: true };
+      } catch (e2) {
+        sendUpdateLog(formatErrorForLog(e2), 'error');
+        return { success: false, error: e2.message };
+      }
+    }
     sendUpdateLog(formatErrorForLog(e), 'error');
     return { success: false, error: e.message };
   }
@@ -455,18 +500,21 @@ function getFirstRemoteUrl(remotes) {
 async function getRepoBasicInfo(git) {
   let remoteUrl = '';
   let branch = '无分支';
-  let status = { modified: [], staged: [], untracked: [], files: [] };
-  
+  let status = { files: [], staged: [] };
+
   try { remoteUrl = getFirstRemoteUrl(await git.getRemotes(true)); } catch (e) {}
   try { const b = await git.branchLocal(); branch = b.current || branch; } catch (e) {}
   try { status = await git.status(); } catch (e) {}
-  
+
+  const counts = countChangeTypes(status);
   return {
     remoteUrl,
     branch,
-    modified: (status.modified || []).length,
+    modified: counts.modified,
     staged: (status.staged || []).length,
-    untracked: (status.untracked || []).length,
+    untracked: counts.added,
+    deleted: counts.deleted,
+    renamed: counts.renamed,
     files: status.files || []
   };
 }
@@ -495,7 +543,9 @@ ipcMain.handle('get-repos', async (event, repoPaths) => {
         hasChanges: info.files.length > 0,
         modified: info.modified,
         staged: info.staged,
-        untracked: info.untracked
+        untracked: info.untracked,
+        deleted: info.deleted,
+        renamed: info.renamed
       });
     } catch (error) {
       repos.push({
@@ -507,7 +557,9 @@ ipcMain.handle('get-repos', async (event, repoPaths) => {
         hasChanges: false,
         modified: 0,
         staged: 0,
-        untracked: 0
+        untracked: 0,
+        deleted: 0,
+        renamed: 0
       });
     }
   }
@@ -532,7 +584,7 @@ ipcMain.handle('get-repo-info', async (event, repoPath) => {
     branch: '空仓库',
     remoteUrl: '',
     platform: '未知',
-    status: { modified: 0, staged: 0, untracked: 0, files: [] },
+    status: { modified: 0, staged: 0, untracked: 0, deleted: 0, renamed: 0, files: [] },
     lastCommit: null
   };
   
@@ -558,6 +610,8 @@ ipcMain.handle('get-repo-info', async (event, repoPath) => {
         modified: info.modified,
         staged: info.staged,
         untracked: info.untracked,
+        deleted: info.deleted,
+        renamed: info.renamed,
         files: info.files
       },
       lastCommit
@@ -571,7 +625,7 @@ ipcMain.handle('git-add', async (event, repoPath, files = []) => {
   try {
     const git = simpleGit(repoPath);
     if (files.length === 0) {
-      await git.add('.');
+      await git.add(['-A']);
     } else {
       await git.add(files);
     }
@@ -595,42 +649,73 @@ ipcMain.handle('git-set-user', async (event, repoPath, username, email) => {
 /** 提交摘要 emoji，与 renderer 文件列表一致 */
 const COMMIT_EMOJI = { modified: '✏️', added: '➕', deleted: '🗑️', renamed: '🔄' };
 
-/** 是否为删除状态（trim 后为 'D'，兼容 'D'、' D' 等 git status 输出） */
-function isDeletedStatus(s) {
-  return String(s || '').trim() === 'D';
+/** 根据 index/working_dir 判断变更类型（与 renderer.getFileChangeType 对齐） */
+function classifyFileChange(file) {
+  const idx = String(file?.index ?? '').trim();
+  const wrk = String(file?.working_dir ?? '').trim();
+  if (idx === 'D' || wrk === 'D') return 'deleted';
+  if (idx === 'R' || wrk === 'R' || idx.includes('R') || wrk.includes('R')) return 'renamed';
+  if (idx === 'A' || wrk === '?' || wrk === '??') return 'added';
+  if (idx === 'M' || wrk === 'M') return 'modified';
+  return 'unknown';
+}
+
+function countChangeTypes(status) {
+  const counts = { modified: 0, added: 0, deleted: 0, renamed: 0 };
+  for (const f of status?.files || []) {
+    const t = classifyFileChange(f);
+    if (counts[t] !== undefined) counts[t]++;
+  }
+  return counts;
 }
 
 function generateCommitSummary(status) {
-  const mod = status.modified || [];
-  const untracked = status.untracked || [];
-  const files = status.files || [];
-
+  const counts = countChangeTypes(status);
   const parts = [];
-  if (mod.length) parts.push(`${COMMIT_EMOJI.modified} ${mod.length} 修改`);
-  if (untracked.length) parts.push(`${COMMIT_EMOJI.added} ${untracked.length} 新增`);
-  const deleted = files.filter(f => isDeletedStatus(f.index) || isDeletedStatus(f.working_dir)).length;
-  if (deleted) parts.push(`${COMMIT_EMOJI.deleted} ${deleted} 删除`);
-  const renamed = files.filter(f => (f.working_dir || f.index || '').includes('R')).length;
-  if (renamed) parts.push(`${COMMIT_EMOJI.renamed} ${renamed} 重命名`);
-
+  if (counts.modified) parts.push(`${COMMIT_EMOJI.modified} ${counts.modified} 修改`);
+  if (counts.added) parts.push(`${COMMIT_EMOJI.added} ${counts.added} 新增`);
+  if (counts.deleted) parts.push(`${COMMIT_EMOJI.deleted} ${counts.deleted} 删除`);
+  if (counts.renamed) parts.push(`${COMMIT_EMOJI.renamed} ${counts.renamed} 重命名`);
   return parts.length ? ` [${parts.join(', ')}]` : '';
 }
 
-/** 从当前暂存区获取增删行数，用于提交信息行数统计 */
+/** 去掉正文里已有的自动摘要/行数，避免重复拼接 */
+function stripAutoCommitMeta(message) {
+  return String(message || '')
+    .replace(/\s*\[[^\]]*(?:✏️|➕|🗑️|🔄)[^\]]*\]/g, '')
+    .replace(/\s*\+\d+\s+-\d+\s+行\s*$/g, '')
+    .trim();
+}
+
+/** 从暂存区 numstat 统计增删行（含新增/删除文件） */
 async function getLineChangesFromCached(git) {
   let insertions = 0;
   let deletions = 0;
   try {
-    const diff = await git.diffSummary(['--cached']);
-    if (diff && typeof diff.insertions === 'number') insertions = diff.insertions;
-    if (diff && typeof diff.deletions === 'number') deletions = diff.deletions;
-  } catch (e) {}
+    const raw = await git.raw(['diff', '--cached', '--numstat']);
+    for (const line of String(raw || '').split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const parts = trimmed.split(/\t/);
+      if (parts.length < 2) continue;
+      const ins = parts[0] === '-' ? 0 : parseInt(parts[0], 10);
+      const del = parts[1] === '-' ? 0 : parseInt(parts[1], 10);
+      if (!Number.isNaN(ins)) insertions += ins;
+      if (!Number.isNaN(del)) deletions += del;
+    }
+  } catch (e) {
+    try {
+      const diff = await git.diffSummary(['--cached']);
+      if (diff && typeof diff.insertions === 'number') insertions = diff.insertions;
+      if (diff && typeof diff.deletions === 'number') deletions = diff.deletions;
+    } catch (_) {}
+  }
   return { insertions, deletions };
 }
 
 /** 拼接完整提交信息：正文 + 摘要(emoji 统计) + 行数 */
 function buildFullCommitMessage(rawMessage, summary, insertions, deletions) {
-  const base = (rawMessage && String(rawMessage).trim()) ? String(rawMessage).trim() : 'Update';
+  const base = stripAutoCommitMeta(rawMessage) || 'Update';
   const lineChanges = (insertions || deletions) ? ` +${insertions} -${deletions} 行` : '';
   return base + summary + lineChanges;
 }
@@ -638,6 +723,7 @@ function buildFullCommitMessage(rawMessage, summary, insertions, deletions) {
 ipcMain.handle('git-commit', async (event, repoPath, message) => {
   try {
     const git = simpleGit(repoPath);
+    await git.add(['-A']);
     const status = await git.status();
     const summary = generateCommitSummary(status);
     const { insertions, deletions } = await getLineChangesFromCached(git);
@@ -736,11 +822,12 @@ ipcMain.handle('git-clone', async (event, url, targetPath, options = {}, config 
   try {
     if (config) url = processRemoteUrl(url, config);
     const envOverrides = buildGitEnvOverrides(config);
+    const parentDir = path.dirname(targetPath) || process.cwd();
     const args = ['clone', url, targetPath];
     if (options && typeof options === 'object') {
       // 保留扩展点：如需传入 --depth 等，可在此映射
     }
-    const result = await runGitCommand(rootDir, args, envOverrides);
+    const result = await runGitCommand(parentDir, args, envOverrides);
     if (!result.success) throw new Error(result.stderr || result.error || 'git clone 失败');
     return { success: true };
   } catch (error) {
@@ -835,15 +922,16 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinates, commitMes
   try {
     const mainGit = simpleGit(mainRepoPath);
 
-    await mainGit.add('.');
+    await mainGit.add(['-A']);
     const status = await mainGit.status();
+    const counts = countChangeTypes(status);
     const summary = generateCommitSummary(status);
     const { insertions, deletions } = await getLineChangesFromCached(mainGit);
     const fullMessage = buildFullCommitMessage(commitMessage, summary, insertions, deletions);
 
-    const deletedCount = (status.files || []).filter(f => isDeletedStatus(f.index) || isDeletedStatus(f.working_dir)).length;
-    const hasChanges = (status.modified?.length || 0) + (status.untracked?.length || 0) + deletedCount > 0;
-    if (!hasChanges && !(insertions || deletions)) {
+    const hasChanges = counts.modified + counts.added + counts.deleted + counts.renamed > 0
+      || insertions > 0 || deletions > 0;
+    if (!hasChanges) {
       return { success: false, error: '没有可提交的变更' };
     }
 
@@ -857,7 +945,7 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinates, commitMes
     const pushRes = await runGitCommand(mainRepoPath, ['push', 'origin'], envOverrides);
     if (!pushRes.success) throw new Error(pushRes.stderr || pushRes.error || '主仓库 push 失败');
 
-    if (subList.length === 0) return { success: true };
+    if (subList.length === 0) return { success: true, message: fullMessage };
 
     let mainRemoteUrl = '';
     try {
@@ -867,6 +955,9 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinates, commitMes
     const results = [];
     for (const { path: subPath, config: subConfig } of subList) {
       try {
+        if (!subPath || !fs.existsSync(subPath)) {
+          throw new Error('从仓库路径无效或不存在');
+        }
         const subGit = simpleGit(subPath);
         let subRemoteUrl = '';
         try {
@@ -874,9 +965,10 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinates, commitMes
         } catch (e) {}
 
         const sameRemote = mainRemoteUrl && subRemoteUrl && mainRemoteUrl === subRemoteUrl;
+        const effectiveConfig = subConfig || mainConfig;
 
         if (sameRemote) {
-          const subEnv = buildGitEnvOverrides(subConfig || mainConfig);
+          const subEnv = buildGitEnvOverrides(effectiveConfig);
           const pullRes = await runGitCommand(subPath, ['pull', 'origin'], subEnv);
           if (!pullRes.success) throw new Error(pullRes.stderr || pullRes.error || '从仓库 pull 失败');
           results.push({ path: subPath, success: true });
@@ -906,19 +998,27 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinates, commitMes
           }
         }
 
-        await subGit.add('.');
-        const userConfig = subConfig?.username && subConfig?.email
-          ? subConfig
-          : mainConfig?.username && mainConfig?.email
-            ? mainConfig
-            : null;
-        if (!userConfig) throw new Error('请先配置平台的用户名和邮箱');
+        await subGit.add(['-A']);
+        const subStatus = await subGit.status();
+        const subCounts = countChangeTypes(subStatus);
+        const subLines = await getLineChangesFromCached(subGit);
+        const subHasChanges = subCounts.modified + subCounts.added + subCounts.deleted + subCounts.renamed > 0
+          || subLines.insertions > 0 || subLines.deletions > 0;
 
-        await subGit.addConfig('user.name', userConfig.username, false);
-        await subGit.addConfig('user.email', userConfig.email, false);
-        await subGit.commit(fullMessage);
+        if (subHasChanges) {
+          const userConfig = effectiveConfig?.username && effectiveConfig?.email
+            ? effectiveConfig
+            : mainConfig?.username && mainConfig?.email
+              ? mainConfig
+              : null;
+          if (!userConfig) throw new Error('请先配置平台的用户名和邮箱');
 
-        const subEnv = buildGitEnvOverrides(subConfig || mainConfig);
+          await subGit.addConfig('user.name', userConfig.username, false);
+          await subGit.addConfig('user.email', userConfig.email, false);
+          await subGit.commit(fullMessage);
+        }
+
+        const subEnv = buildGitEnvOverrides(effectiveConfig);
         const subPushRes = await runGitCommand(subPath, ['push', 'origin'], subEnv);
         if (!subPushRes.success) throw new Error(subPushRes.stderr || subPushRes.error || '从仓库 push 失败');
 
@@ -933,7 +1033,8 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinates, commitMes
     return {
       success: allOk,
       error: allOk ? undefined : results.find(r => !r.success)?.error,
-      results  // 与 subList 顺序一致，便于前端按索引对应从仓名称
+      message: fullMessage,
+      results
     };
   } catch (error) {
     return { success: false, error: error?.message || String(error) };

@@ -14,6 +14,7 @@ let state = {
     theme: 'light',
     autoRefreshEnabled: true,
     autoRefreshInterval: 30000, // 30秒自动刷新
+    updateProxyPort: '',
     isRefreshing: false
 };
 
@@ -138,6 +139,7 @@ async function loadConfig() {
     state.theme = config.theme || 'light';
     state.autoRefreshEnabled = config.autoRefreshEnabled !== undefined ? config.autoRefreshEnabled : true;
     state.autoRefreshInterval = config.autoRefreshInterval || 30000;
+    state.updateProxyPort = config.update_proxy_port != null ? String(config.update_proxy_port) : '';
     if (state.repoPaths.length > 0) await refreshRepoList();
     applyTheme(state.theme);
 }
@@ -153,7 +155,8 @@ async function saveConfig() {
         sync_config: state.syncConfig,
         theme: state.theme,
         autoRefreshEnabled: state.autoRefreshEnabled,
-        autoRefreshInterval: state.autoRefreshInterval
+        autoRefreshInterval: state.autoRefreshInterval,
+        update_proxy_port: state.updateProxyPort || ''
     };
     await ipcRenderer.invoke('save-config', config);
 }
@@ -318,8 +321,8 @@ function renderRepoList() {
         
         const actualIndex = state.repos.findIndex(r => r.path === repo.path);
         
-        const changes = repo.modified + repo.staged + repo.untracked;
-        const hasChanges = changes > 0;
+        const changes = (repo.modified || 0) + (repo.untracked || 0) + (repo.deleted || 0) + (repo.renamed || 0);
+        const hasChanges = changes > 0 || !!repo.hasChanges;
         const role = getRepoRole(repo.name);
         
         const branchText = repo.branch || '无分支';
@@ -471,7 +474,10 @@ function updateRepoStatus(repoPath, repoInfo) {
         Object.assign(updatedRepo, {
             modified: repoInfo.status.modified || 0,
             staged: repoInfo.status.staged || 0,
-            untracked: repoInfo.status.untracked || 0
+            untracked: repoInfo.status.untracked || 0,
+            deleted: repoInfo.status.deleted || 0,
+            renamed: repoInfo.status.renamed || 0,
+            hasChanges: (repoInfo.status.files || []).length > 0
         });
         if (state.currentRepo?.path === repoPath) {
             state.currentRepo = updatedRepo;
@@ -513,7 +519,13 @@ function updateRepoInfo(repoInfo) {
     elements.repoInfo.remote.textContent = repoInfo.remoteUrl || '-';
     elements.repoInfo.auth.textContent = config.auth_type === 'ssh' ? 'SSH密钥' : config.auth_type === 'password' ? '账号密码/Token' : '-';
     
-    if (repoInfo.status) renderChanges(repoInfo.status);
+    if (repoInfo.status) {
+        renderChanges(repoInfo.status);
+        const cur = elements.commitMessage?.value?.trim() || '';
+        if (!cur || /^Update:/.test(cur)) {
+            setDefaultCommitMessage(repoInfo.status);
+        }
+    }
 }
 
 // 文件变更类型：与 main 进程 COMMIT_EMOJI 一致，根据 index/working_dir 归一化判断
@@ -526,6 +538,24 @@ function getFileChangeType(file) {
     if (idx === 'A' || wrk === '?' || wrk === '??') return FILE_CHANGE.added;
     if (idx === 'M' || wrk === 'M') return FILE_CHANGE.modified;
     return FILE_CHANGE.unknown;
+}
+
+function buildChangeSummaryFromStatus(status) {
+    if (!status?.files?.length) return '';
+    const counts = { modified: 0, added: 0, deleted: 0, renamed: 0 };
+    for (const f of status.files) {
+        const t = getFileChangeType(f);
+        if (t === FILE_CHANGE.modified) counts.modified++;
+        else if (t === FILE_CHANGE.added) counts.added++;
+        else if (t === FILE_CHANGE.deleted) counts.deleted++;
+        else if (t === FILE_CHANGE.renamed) counts.renamed++;
+    }
+    const parts = [];
+    if (counts.modified) parts.push(`✏️ ${counts.modified} 修改`);
+    if (counts.added) parts.push(`➕ ${counts.added} 新增`);
+    if (counts.deleted) parts.push(`🗑️ ${counts.deleted} 删除`);
+    if (counts.renamed) parts.push(`🔄 ${counts.renamed} 重命名`);
+    return parts.length ? ` [${parts.join(', ')}]` : '';
 }
 
 function renderChanges(status) {
@@ -617,7 +647,7 @@ async function openRepoFolder(repoPath) {
 async function getCommitMessage() {
     let message = elements.commitMessage.value.trim();
     if (!message || message.startsWith('Update:')) {
-        const defaultValue = `Update: ${new Date().toLocaleString('zh-CN')}`;
+        const defaultValue = message || `Update: ${new Date().toLocaleString('zh-CN')}`;
         const input = await showInputModal('提交信息', '请输入提交信息:', defaultValue, '提交信息');
         if (!input) return null;
         message = input;
@@ -908,16 +938,36 @@ function getSubordinates(mainRepoName) {
     return group.subordinates || [];
 }
 
-// 设置默认提交信息
-function setDefaultCommitMessage() {
+// 设置默认提交信息（含修改/新增/删除等文件数总和）
+function setDefaultCommitMessage(status) {
     const now = new Date();
-    const dateStr = now.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-    elements.commitMessage.value = `Update: ${dateStr}`;
+    const dateStr = now.toLocaleString('zh-CN', {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+    const summary = buildChangeSummaryFromStatus(status);
+    if (elements.commitMessage) {
+        elements.commitMessage.value = `Update: ${dateStr}${summary}`;
+    }
 }
 
 // 平台配置对话框
 function openPlatformConfig() {
     showModal('平台配置', createPlatformConfigContent(), async () => {
+        const portInput = document.getElementById('update-proxy-port');
+        if (portInput) {
+            const raw = String(portInput.value || '').trim();
+            if (raw) {
+                const port = parseInt(raw, 10);
+                if (!Number.isFinite(port) || port < 1 || port > 65535) {
+                    showMessage('更新代理端口需为 1–65535', 'warning');
+                    return false;
+                }
+                state.updateProxyPort = String(port);
+            } else {
+                state.updateProxyPort = '';
+            }
+        }
         await saveConfig();
         showMessage('配置已保存', 'success');
     });
@@ -936,7 +986,16 @@ function escapeAttr(s) {
 // 创建平台配置内容
 function createPlatformConfigContent() {
     const platforms = ['GitHub', 'Gitee', 'GitCode', 'GitLab', '其他'];
-    let html = '<div class="platform-tabs">';
+    let html = `
+        <div class="form-group" style="margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border-color, #e5e5e5);">
+            <label class="form-label">应用更新代理端口（可选）</label>
+            <input type="number" class="form-input" id="update-proxy-port" min="1" max="65535"
+                value="${escapeAttr(state.updateProxyPort || '')}"
+                placeholder="如 7890（Clash / V2Ray 本地 HTTP 端口）">
+            <small class="form-hint">检查或下载更新直连失败时，自动改用 127.0.0.1:该端口 重试</small>
+        </div>
+        <div class="platform-tabs">
+    `;
     
     platforms.forEach((platform, index) => {
         html += `<button class="tab-btn ${index === 0 ? 'active' : ''}" data-platform="${platform}">${platform}</button>`;
@@ -1457,7 +1516,7 @@ function showHelp() {
             <h4 style="margin-top: 15px; margin-bottom: 8px; font-size: 14px;">快速开始</h4>
             <ol style="padding-left: 20px;">
                 <li>点击「添加仓库」选择任意位置的 Git 项目目录（路径会保存到本地）</li>
-                <li>配置平台认证信息（SSH 密钥或 Token，GitHub 可配代理）</li>
+                <li>配置平台认证信息（SSH 密钥或 Token，GitHub 可配代理；可填更新代理端口）</li>
                 <li>在列表中选择仓库进行操作</li>
             </ol>
             <h4 style="margin-top: 15px; margin-bottom: 8px; font-size: 14px;">核心功能</h4>

@@ -59,6 +59,28 @@ function buildChangeSummaryFromStatus(status) {
   return parts.length ? ` [${parts.join(', ')}]` : '';
 }
 
+function basenamePath(p) {
+  const parts = String(p || '').split(/[/\\]/).filter(Boolean);
+  return parts[parts.length - 1] || p || '未知仓库';
+}
+
+function placeholderReposFromPaths(paths) {
+  return (paths || []).map((repoPath) => ({
+    name: basenamePath(repoPath),
+    path: repoPath,
+    branch: '加载中…',
+    remoteUrl: '',
+    platform: '…',
+    hasChanges: false,
+    modified: 0,
+    staged: 0,
+    untracked: 0,
+    deleted: 0,
+    renamed: 0,
+    loading: true
+  }));
+}
+
 const state = reactive({
   repoPaths: [],
   repos: [],
@@ -71,6 +93,7 @@ const state = reactive({
   autoRefreshInterval: 30000,
   updateProxyPort: '',
   isRefreshing: false,
+  isBootstrapping: true,
   panelSizes: null,
   appVersion: '',
   searchTerm: '',
@@ -164,7 +187,11 @@ export function useAppStore() {
     state.updateProxyPort = config.update_proxy_port != null ? String(config.update_proxy_port) : '';
     state.panelSizes = Array.isArray(config.panel_sizes) ? config.panel_sizes : null;
     applyTheme(state.theme);
-    if (state.repoPaths.length > 0) await refreshRepoList(true);
+    // 先用路径占位填满列表，避免加载期间空白/布局塌陷
+    if (state.repoPaths.length > 0) {
+      state.repos = placeholderReposFromPaths(state.repoPaths);
+      await refreshRepoList(true);
+    }
   }
 
   function getRepoRole(repoName) {
@@ -206,6 +233,10 @@ export function useAppStore() {
       showMessage('请先选择一个仓库', 'warning');
       return false;
     }
+    if (state.currentRepo.loading) {
+      showMessage('仓库信息仍在加载，请稍候', 'info');
+      return false;
+    }
     return true;
   }
 
@@ -215,18 +246,23 @@ export function useAppStore() {
     const previousPath = state.currentRepo?.path;
     const nonce = state.selectionNonce;
     try {
-      // 必须传纯数组，不能传 Vue Proxy（否则 IPC 报 An object could not be cloned）
       const paths = state.repoPaths.slice();
+      if (!paths.length) {
+        state.repos = [];
+        state.currentRepo = null;
+        state.repoInfo = null;
+        if (!silent) log('仓库列表为空', 'info');
+        return;
+      }
       state.repos = (await invoke('get-repos', paths)) || [];
       if (previousPath && nonce === state.selectionNonce) {
         const found = state.repos.find((r) => r.path === previousPath);
         if (found) state.currentRepo = found;
       }
-      if (state.currentRepo) await updateCurrentRepoInfo(true);
+      if (state.currentRepo && !state.currentRepo.loading) await updateCurrentRepoInfo(true);
       if (!silent) log(`已加载 ${state.repos.length} 个仓库`, 'success');
     } catch (error) {
-      if (!silent) log(`刷新失败: ${error.message}`, 'error');
-      else log(`刷新失败: ${error.message}`, 'error');
+      log(`刷新失败: ${error.message}`, 'error');
     } finally {
       state.isRefreshing = false;
     }
@@ -259,6 +295,7 @@ export function useAppStore() {
   }
 
   async function selectRepo(repo) {
+    if (!repo || repo.loading) return;
     const latest = state.repos.find((r) => r.path === repo.path) || repo;
     state.selectionNonce++;
     state.currentRepo = latest;
@@ -370,54 +407,42 @@ export function useAppStore() {
     return commitResult;
   }
 
-  async function quickCommit() {
+  async function runCommitFlow({ push = false } = {}) {
     if (state.busy || !checkRepoSelected()) return;
     const repo = state.currentRepo;
     const nonce = state.selectionNonce;
     const message = await getCommitMessage();
     if (!message) return;
     state.busy = true;
-    logRepo(repo.name, `开始提交: ${message}`, 'info');
+    const actionLabel = push ? '提交并推送' : '提交';
+    logRepo(repo.name, `开始${actionLabel}: ${message}`, 'info');
     try {
       const config = getRepoConfigFor(repo);
       const result = await executeCommit(repo.path, message, config);
       logRepo(repo.name, `提交成功: ${result.message}`, 'success');
-      showRepoMessage(repo.name, '提交成功！', 'success');
+      if (push) {
+        logRepo(repo.name, '开始推送到远程...', 'info');
+        const pushResult = await invoke('git-push', repo.path, 'origin', null, config);
+        if (!pushResult.success) throw new Error(pushResult.error);
+        logRepo(repo.name, '推送成功！', 'success');
+      }
+      showRepoMessage(repo.name, `${actionLabel}成功！`, 'success');
       if (nonce === state.selectionNonce) setDefaultCommitMessage();
       await refreshRepoList(true);
     } catch (error) {
-      logRepo(repo.name, `提交失败: ${error.message}`, 'error');
-      showRepoMessage(repo.name, `提交失败: ${error.message}`, 'error');
+      logRepo(repo.name, `${actionLabel}失败: ${error.message}`, 'error');
+      showRepoMessage(repo.name, `${actionLabel}失败: ${error.message}`, 'error');
     } finally {
       state.busy = false;
     }
   }
 
+  async function quickCommit() {
+    await runCommitFlow({ push: false });
+  }
+
   async function commitAndPush() {
-    if (state.busy || !checkRepoSelected()) return;
-    const repo = state.currentRepo;
-    const nonce = state.selectionNonce;
-    const message = await getCommitMessage();
-    if (!message) return;
-    state.busy = true;
-    logRepo(repo.name, `开始提交并推送: ${message}`, 'info');
-    try {
-      const config = getRepoConfigFor(repo);
-      const result = await executeCommit(repo.path, message, config);
-      logRepo(repo.name, `提交成功: ${result.message}`, 'success');
-      logRepo(repo.name, '开始推送到远程...', 'info');
-      const pushResult = await invoke('git-push', repo.path, 'origin', null, config);
-      if (!pushResult.success) throw new Error(pushResult.error);
-      logRepo(repo.name, '推送成功！', 'success');
-      showRepoMessage(repo.name, '提交并推送成功！', 'success');
-      if (nonce === state.selectionNonce) setDefaultCommitMessage();
-      await refreshRepoList(true);
-    } catch (error) {
-      logRepo(repo.name, `操作失败: ${error.message}`, 'error');
-      showRepoMessage(repo.name, `操作失败: ${error.message}`, 'error');
-    } finally {
-      state.busy = false;
-    }
+    await runCommitFlow({ push: true });
   }
 
   async function commitAndSync() {
@@ -439,8 +464,8 @@ export function useAppStore() {
       const subList = [];
       for (const subName of subordinates) {
         const subRepo = state.repos.find((r) => r.name === subName);
-        if (!subRepo?.path) {
-          logRepo(mainRepo.name, `从仓库 ${subName} 未在列表中，跳过`, 'warning');
+        if (!subRepo?.path || subRepo.loading) {
+          logRepo(mainRepo.name, `从仓库 ${subName} 未就绪，跳过`, 'warning');
           continue;
         }
         let subConfig = sanitizeConfig(state.platformConfig[subRepo.platform] || {});
@@ -450,7 +475,9 @@ export function useAppStore() {
         subList.push({ path: subRepo.path, config: subConfig });
       }
       if (subList.length === 0) {
-        logRepo(mainRepo.name, '没有可同步的从仓库', 'warning');
+        logRepo(mainRepo.name, '没有可同步的从仓库，改为普通推送', 'warning');
+        state.busy = false;
+        await commitAndPush();
         return;
       }
       const syncResult = await invoke('sync-repos', mainRepo.path, subList, message, config);
@@ -659,18 +686,23 @@ export function useAppStore() {
   }
 
   async function initApp() {
-    state.appVersion = await invoke('get-app-version');
-    log(`🌻 向日葵Git仓库管理 v${state.appVersion} 已启动`, 'success');
-    const gitCheck = await invoke('check-git');
-    if (!gitCheck.installed) {
-      log('⚠️ 警告：未检测到 Git，请先安装 Git', 'warning');
-      showMessage('未检测到 Git，请先安装', 'warning');
-    } else {
-      log(`✓ Git: ${gitCheck.version}`, 'success');
+    state.isBootstrapping = true;
+    try {
+      state.appVersion = await invoke('get-app-version');
+      log(`🌻 向日葵Git仓库管理 v${state.appVersion} 已启动`, 'success');
+      const gitCheck = await invoke('check-git');
+      if (!gitCheck.installed) {
+        log('⚠️ 警告：未检测到 Git，请先安装 Git', 'warning');
+        showMessage('未检测到 Git，请先安装', 'warning');
+      } else {
+        log(`✓ Git: ${gitCheck.version}`, 'success');
+      }
+      await loadConfig();
+      setDefaultCommitMessage();
+      startAutoRefresh();
+    } finally {
+      state.isBootstrapping = false;
     }
-    await loadConfig();
-    setDefaultCommitMessage();
-    startAutoRefresh();
   }
 
   return {

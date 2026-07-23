@@ -17,8 +17,13 @@ const {
 const listEl = ref(null);
 let sortable = null;
 
+const isLoading = computed(
+  () => state.isBootstrapping || (state.isRefreshing && state.repos.some((r) => r.loading))
+);
+
 const countText = computed(() => {
-  const total = state.repos.length;
+  const total = state.repos.length || state.repoPaths.length;
+  if (isLoading.value && !state.repos.length) return '加载中';
   const shown = filteredRepos.value.length;
   if (state.searchTerm.trim()) return `${shown}/${total}`;
   return String(total);
@@ -30,12 +35,18 @@ function changeCount(repo) {
   return (repo.modified || 0) + (repo.untracked || 0) + (repo.deleted || 0) + (repo.renamed || 0);
 }
 
+function roleBadge(repo) {
+  const role = getRepoRole(repo.name);
+  if (!role) return null;
+  return role === 'main' ? { class: 'badge-main', text: '主' } : { class: 'badge-sub', text: '从' };
+}
+
 function setupSortable() {
   if (sortable) {
     sortable.destroy();
     sortable = null;
   }
-  if (!listEl.value || isFiltered.value || filteredRepos.value.length < 2) return;
+  if (!listEl.value || isFiltered.value || isLoading.value || filteredRepos.value.length < 2) return;
   sortable = Sortable.create(listEl.value, {
     handle: '.repo-drag-handle',
     animation: 150,
@@ -50,7 +61,7 @@ function setupSortable() {
   });
 }
 
-watch([filteredRepos, isFiltered], async () => {
+watch([filteredRepos, isFiltered, isLoading], async () => {
   await nextTick();
   setupSortable();
 }, { flush: 'post' });
@@ -60,7 +71,7 @@ watch([filteredRepos, isFiltered], async () => {
   <div class="panel panel-left" id="panel-left">
     <div class="panel-header">
       <h2>仓库列表</h2>
-      <span class="panel-meta">{{ countText }}</span>
+      <span class="panel-meta" :class="{ 'panel-meta--pulse': isLoading }">{{ countText }}</span>
     </div>
     <div class="panel-body panel-body--list">
       <div class="search-box">
@@ -70,6 +81,7 @@ watch([filteredRepos, isFiltered], async () => {
           class="search-input"
           placeholder="搜索仓库名称 / 平台 / 分支…"
           autocomplete="off"
+          :disabled="isLoading && !state.repos.length"
         >
       </div>
       <div class="repo-list-container">
@@ -78,33 +90,48 @@ watch([filteredRepos, isFiltered], async () => {
             v-for="repo in filteredRepos"
             :key="repo.path"
             class="repo-item"
-            :class="{ active: state.currentRepo?.path === repo.path }"
+            :class="{
+              active: state.currentRepo?.path === repo.path,
+              'repo-item--loading': repo.loading
+            }"
             :data-repo-path="repo.path"
-            @click="selectRepo(repo)"
-            @dblclick="openRepoFolder(repo.path)"
+            @click="!repo.loading && selectRepo(repo)"
+            @dblclick="!repo.loading && openRepoFolder(repo.path)"
           >
-            <div v-if="!isFiltered" class="repo-drag-handle" title="拖动调整顺序" @click.stop>⋮⋮</div>
+            <div v-if="!isFiltered && !repo.loading" class="repo-drag-handle" title="拖动调整顺序" @click.stop>⋮⋮</div>
             <div class="repo-item-body">
               <div class="repo-name">{{ repo.name }}</div>
               <div class="repo-meta">
                 <span class="repo-badge badge-platform">{{ repo.platform }}</span>
                 <span class="repo-branch">{{ repo.branch || '无分支' }}</span>
                 <span
-                  v-if="getRepoRole(repo.name)"
+                  v-if="!repo.loading && roleBadge(repo)"
                   class="repo-badge"
-                  :class="getRepoRole(repo.name) === 'main' ? 'badge-main' : 'badge-sub'"
-                >{{ getRepoRole(repo.name) === 'main' ? '主' : '从' }}</span>
+                  :class="roleBadge(repo).class"
+                >{{ roleBadge(repo).text }}</span>
                 <span
-                  v-if="changeCount(repo) > 0 || repo.hasChanges"
+                  v-if="!repo.loading && (changeCount(repo) > 0 || repo.hasChanges)"
                   class="repo-badge badge-changes"
                 >{{ changeCount(repo) || '•' }}</span>
               </div>
             </div>
-            <button class="btn-icon repo-remove-btn" title="从列表移除" @click.stop="removeRepoFromList(repo.path)">✕</button>
+            <button
+              v-if="!repo.loading"
+              class="btn-icon repo-remove-btn"
+              title="从列表移除"
+              @click.stop="removeRepoFromList(repo.path)"
+            >✕</button>
           </li>
         </ul>
+        <div v-else-if="isLoading" class="empty-state empty-state--loading">
+          <div class="loading-spinner" aria-hidden="true" />
+          <p>正在加载仓库…</p>
+        </div>
         <div v-else class="empty-state">
-          <template v-if="!state.repos.length">暂无仓库<br><small>点击「添加仓库」或「克隆」开始</small></template>
+          <template v-if="!state.repos.length">
+            暂无仓库<br>
+            <small>点击「添加仓库」或「克隆」开始</small>
+          </template>
           <template v-else>无匹配仓库</template>
         </div>
       </div>

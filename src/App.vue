@@ -10,6 +10,9 @@ import WorkspacePanel from './components/WorkspacePanel.vue';
 import LogPanel from './components/LogPanel.vue';
 import AppModal from './components/AppModal.vue';
 
+const DEFAULT_SIZES = [24, 48, 28];
+const MIN_SIZES = [200, 340, 200];
+
 const store = useAppStore();
 const { state, initApp, stopAutoRefresh, saveConfig, closeModal, quickCommit } = store;
 setupUpdates(store);
@@ -17,16 +20,20 @@ setupUpdates(store);
 const splitRoot = ref(null);
 let splitInstance = null;
 
+function resolveSizes() {
+  if (Array.isArray(state.panelSizes) && state.panelSizes.length === 3) {
+    return state.panelSizes;
+  }
+  return DEFAULT_SIZES;
+}
+
 function initSplit() {
-  if (!splitRoot.value) return;
+  if (!splitRoot.value || splitInstance) return;
   const panels = splitRoot.value.querySelectorAll('.panel');
   if (panels.length < 3) return;
-  const sizes = Array.isArray(state.panelSizes) && state.panelSizes.length === 3
-    ? state.panelSizes
-    : [24, 48, 28];
   splitInstance = Split([...panels], {
-    sizes,
-    minSize: [200, 340, 200],
+    sizes: resolveSizes(),
+    minSize: MIN_SIZES,
     gutterSize: 8,
     cursor: 'col-resize',
     onDragEnd(newSizes) {
@@ -34,6 +41,17 @@ function initSplit() {
       saveConfig();
     }
   });
+  splitRoot.value.classList.add('split-ready');
+}
+
+function syncSplitSizes() {
+  if (!splitInstance) return;
+  const sizes = resolveSizes();
+  try {
+    splitInstance.setSizes(sizes);
+  } catch {
+    /* ignore */
+  }
 }
 
 function onKeydown(e) {
@@ -45,17 +63,23 @@ function onKeydown(e) {
 }
 
 onMounted(async () => {
-  await initApp();
-  await nextTick();
-  initSplit();
   document.addEventListener('keydown', onKeydown);
   window.addEventListener('beforeunload', stopAutoRefresh);
+  // 先挂分栏，避免 initApp 加载仓库期间三栏挤到左侧
+  await nextTick();
+  initSplit();
+  await initApp();
+  await nextTick();
+  syncSplitSizes();
 });
 
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKeydown);
   stopAutoRefresh();
-  if (splitInstance) splitInstance.destroy();
+  if (splitInstance) {
+    splitInstance.destroy();
+    splitInstance = null;
+  }
 });
 </script>
 

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from 'vue';
+import { ref } from 'vue';
 import { invoke } from '../utils/ipc.js';
 
 defineProps({
@@ -7,18 +7,18 @@ defineProps({
 });
 
 const maximizeLabel = ref('□');
-let timer;
 
 async function refreshMax() {
   const isMax = await invoke('window-is-maximized');
   maximizeLabel.value = isMax ? '❐' : '□';
 }
 
-onMounted(() => {
-  refreshMax();
-  timer = setInterval(refreshMax, 400);
-});
-onBeforeUnmount(() => clearInterval(timer));
+async function onMaximize() {
+  await invoke('window-maximize');
+  await refreshMax();
+}
+
+refreshMax();
 </script>
 
 <template>
@@ -30,9 +30,9 @@ onBeforeUnmount(() => clearInterval(timer));
         <span v-if="version" class="title-version">v{{ version }}</span>
       </div>
       <div class="title-bar-controls">
-        <button class="title-bar-btn" title="最小化" @click="invoke('window-minimize')">−</button>
-        <button class="title-bar-btn" title="最大化/还原" @click="invoke('window-maximize')">{{ maximizeLabel }}</button>
-        <button class="title-bar-btn btn-close" title="关闭" @click="invoke('window-close')">×</button>
+        <button class="title-bar-btn" type="button" title="最小化" @click="invoke('window-minimize')">−</button>
+        <button class="title-bar-btn" type="button" title="最大化/还原" @click="onMaximize">{{ maximizeLabel }}</button>
+        <button class="title-bar-btn btn-close" type="button" title="关闭" @click="invoke('window-close')">×</button>
       </div>
     </div>
   </div>

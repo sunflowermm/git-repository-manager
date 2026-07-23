@@ -6,11 +6,11 @@ import { useToast } from './useToast.js';
 const PLATFORMS = ['GitHub', 'Gitee', 'GitCode', 'GitLab', '其他'];
 
 const FILE_CHANGE = {
-  added: { icon: '➕', label: '新增' },
-  modified: { icon: '✏️', label: '修改' },
-  deleted: { icon: '🗑️', label: '删除' },
-  renamed: { icon: '🔄', label: '重命名' },
-  unknown: { icon: '📄', label: '' }
+  added: { icon: 'file-add', label: '新增' },
+  modified: { icon: 'file-edit', label: '修改' },
+  deleted: { icon: 'file-del', label: '删除' },
+  renamed: { icon: 'file-ren', label: '重命名' },
+  unknown: { icon: 'file', label: '' }
 };
 
 function sanitizeConfig(config) {
@@ -52,10 +52,10 @@ function buildChangeSummaryFromStatus(status) {
     else if (t === FILE_CHANGE.renamed) counts.renamed++;
   }
   const parts = [];
-  if (counts.modified) parts.push(`✏️ ${counts.modified} 修改`);
-  if (counts.added) parts.push(`➕ ${counts.added} 新增`);
-  if (counts.deleted) parts.push(`🗑️ ${counts.deleted} 删除`);
-  if (counts.renamed) parts.push(`🔄 ${counts.renamed} 重命名`);
+  if (counts.modified) parts.push(`${counts.modified} 修改`);
+  if (counts.added) parts.push(`${counts.added} 新增`);
+  if (counts.deleted) parts.push(`${counts.deleted} 删除`);
+  if (counts.renamed) parts.push(`${counts.renamed} 重命名`);
   return parts.length ? ` [${parts.join(', ')}]` : '';
 }
 
@@ -400,11 +400,13 @@ export function useAppStore() {
     if (config?.username && config?.email) {
       await invoke('git-set-user', repoPath, config.username, config.email);
     }
-    const addResult = await invoke('git-add', repoPath);
-    if (!addResult.success) throw new Error(addResult.error);
     const commitResult = await invoke('git-commit', repoPath, message);
     if (!commitResult.success) throw new Error(commitResult.error);
     return commitResult;
+  }
+
+  function oneLine(text) {
+    return String(text || '').replace(/\s+/g, ' ').trim();
   }
 
   async function runCommitFlow({ push = false } = {}) {
@@ -415,18 +417,20 @@ export function useAppStore() {
     if (!message) return;
     state.busy = true;
     const actionLabel = push ? '提交并推送' : '提交';
-    logRepo(repo.name, `开始${actionLabel}: ${message}`, 'info');
+    logRepo(repo.name, `开始${actionLabel}`, 'info');
+    logRepo(repo.name, `拟提交信息: ${oneLine(message)}`, 'info');
     try {
       const config = getRepoConfigFor(repo);
       const result = await executeCommit(repo.path, message, config);
-      logRepo(repo.name, `提交成功: ${result.message}`, 'success');
+      const realMsg = result.message || message;
+      logRepo(repo.name, `提交成功: ${oneLine(realMsg)}`, 'success');
       if (push) {
-        logRepo(repo.name, '开始推送到远程...', 'info');
+        logRepo(repo.name, '开始推送到 origin...', 'info');
         const pushResult = await invoke('git-push', repo.path, 'origin', null, config);
         if (!pushResult.success) throw new Error(pushResult.error);
-        logRepo(repo.name, '推送成功！', 'success');
+        logRepo(repo.name, `推送成功（提交: ${oneLine(realMsg)}）`, 'success');
       }
-      showRepoMessage(repo.name, `${actionLabel}成功！`, 'success');
+      showRepoMessage(repo.name, `${actionLabel}成功`, 'success');
       if (nonce === state.selectionNonce) setDefaultCommitMessage();
       await refreshRepoList(true);
     } catch (error) {
@@ -451,6 +455,7 @@ export function useAppStore() {
     const role = getRepoRole(mainRepo.name);
     const subordinates = role === 'main' ? getSubordinates(mainRepo.name) : [];
     if (role !== 'main' || subordinates.length === 0) {
+      logRepo(mainRepo.name, '当前不是主仓库或无从仓库，改为普通推送', 'info');
       await commitAndPush();
       return;
     }
@@ -459,20 +464,21 @@ export function useAppStore() {
     if (!message) return;
     state.busy = true;
     logRepo(mainRepo.name, `开始同步推送 -> ${subordinates.join(', ')}`, 'info');
+    logRepo(mainRepo.name, `拟提交信息: ${oneLine(message)}`, 'info');
     try {
       const config = getRepoConfigFor(mainRepo);
       const subList = [];
       for (const subName of subordinates) {
         const subRepo = state.repos.find((r) => r.name === subName);
         if (!subRepo?.path || subRepo.loading) {
-          logRepo(mainRepo.name, `从仓库 ${subName} 未就绪，跳过`, 'warning');
+          logRepo(mainRepo.name, `从仓库「${subName}」未就绪，跳过`, 'warning');
           continue;
         }
         let subConfig = sanitizeConfig(state.platformConfig[subRepo.platform] || {});
         if ((!subConfig.username || !subConfig.email) && config.username && config.email) {
           subConfig = { ...subConfig, username: config.username, email: config.email };
         }
-        subList.push({ path: subRepo.path, config: subConfig });
+        subList.push({ path: subRepo.path, name: subRepo.name, config: subConfig });
       }
       if (subList.length === 0) {
         logRepo(mainRepo.name, '没有可同步的从仓库，改为普通推送', 'warning');
@@ -480,20 +486,33 @@ export function useAppStore() {
         await commitAndPush();
         return;
       }
+
       const syncResult = await invoke('sync-repos', mainRepo.path, subList, message, config);
-      if (!syncResult.success) throw new Error(syncResult.error || '同步失败');
-      const failCount = (syncResult.results || []).filter((r) => !r.success).length;
-      if (failCount === 0) {
-        logRepo(mainRepo.name, '同步完成！', 'success');
-        showRepoMessage(
-          mainRepo.name,
-          `同步推送完成！\n主仓库: ${mainRepo.name}\n从仓库: ${subordinates.join(', ')}`,
-          'success'
-        );
-      } else {
-        logRepo(mainRepo.name, `同步完成，但有 ${failCount} 个失败`, 'warning');
-        showRepoMessage(mainRepo.name, `同步部分完成，失败 ${failCount} 个`, 'warning');
+      const realMsg = oneLine(syncResult.message || message);
+
+      if (syncResult.message) {
+        logRepo(mainRepo.name, `实际提交信息: ${realMsg}`, 'info');
       }
+
+      for (const r of syncResult.results || []) {
+        const label = r.name || r.path || '从仓库';
+        if (r.success) {
+          const detail = r.detail || (r.mode === 'pull' ? '同远程已 pull' : '同步完成');
+          const msgPart = r.commitMessage ? `；提交: ${oneLine(r.commitMessage)}` : '';
+          logRepo(mainRepo.name, `从仓库「${label}」${detail}${msgPart}`, 'success');
+        } else {
+          logRepo(mainRepo.name, `从仓库「${label}」失败: ${r.error || '未知错误'}`, 'error');
+        }
+      }
+
+      if (!syncResult.success) {
+        throw new Error(syncResult.error || '同步失败');
+      }
+
+      const okCount = (syncResult.results || []).filter((r) => r.success).length;
+      const total = (syncResult.results || []).length;
+      logRepo(mainRepo.name, `同步完成 ${okCount}/${total}；提交信息: ${realMsg}`, 'success');
+      showRepoMessage(mainRepo.name, `同步完成 ${okCount}/${total}\n${realMsg}`, 'success');
       if (nonce === state.selectionNonce) setDefaultCommitMessage();
       await refreshRepoList(true);
     } catch (error) {
@@ -689,13 +708,13 @@ export function useAppStore() {
     state.isBootstrapping = true;
     try {
       state.appVersion = await invoke('get-app-version');
-      log(`🌻 向日葵Git仓库管理 v${state.appVersion} 已启动`, 'success');
+      log(`向日葵Git仓库管理 v${state.appVersion} 已启动`, 'success');
       const gitCheck = await invoke('check-git');
       if (!gitCheck.installed) {
-        log('⚠️ 警告：未检测到 Git，请先安装 Git', 'warning');
+        log('警告：未检测到 Git，请先安装 Git', 'warning');
         showMessage('未检测到 Git，请先安装', 'warning');
       } else {
-        log(`✓ Git: ${gitCheck.version}`, 'success');
+        log(`Git: ${gitCheck.version}`, 'success');
       }
       await loadConfig();
       setDefaultCommitMessage();

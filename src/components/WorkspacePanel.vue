@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue';
 import { useAppStore } from '../composables/useAppStore.js';
+import AppIcon from './AppIcon.vue';
 
 const store = useAppStore();
 const {
@@ -77,40 +78,48 @@ async function refreshChanges() {
       </div>
 
       <div v-else-if="!hasRepo" class="workspace-empty">
-        <div class="workspace-empty__art" aria-hidden="true">🌻</div>
+        <div class="workspace-empty__art" aria-hidden="true">
+          <AppIcon name="sunflower" :size="52" />
+        </div>
         <p class="workspace-empty__title">选择或添加一个仓库开始</p>
         <p class="workspace-empty__desc">支持提交、推送、主从同步与批量操作</p>
         <div class="workspace-empty__actions">
-          <button class="btn btn-primary" type="button" @click="addRepo">添加仓库</button>
-          <button class="btn btn-secondary" type="button" @click="openClone">克隆仓库</button>
+          <button class="btn btn-primary" type="button" @click="addRepo">
+            <AppIcon name="plus" :size="15" /> 添加仓库
+          </button>
+          <button class="btn btn-secondary" type="button" @click="openClone">
+            <AppIcon name="clone" :size="15" /> 克隆仓库
+          </button>
         </div>
       </div>
 
       <div v-else class="workspace-active">
         <div class="repo-info">
-          <div class="info-item">
-            <span class="info-label">仓库</span>
-            <span class="info-value">{{ state.repoInfo?.name || state.currentRepo.name }}</span>
+          <div class="repo-info__meta">
+            <div class="info-chip">
+              <span class="info-label">仓库</span>
+              <span class="info-value" :title="state.repoInfo?.name || state.currentRepo.name">{{ state.repoInfo?.name || state.currentRepo.name }}</span>
+            </div>
+            <div class="info-chip">
+              <span class="info-label">平台</span>
+              <span class="info-value">{{ state.repoInfo?.platform || '-' }}</span>
+            </div>
+            <div class="info-chip">
+              <span class="info-label">分支</span>
+              <span class="info-value">{{ state.repoInfo?.branch || '-' }}</span>
+            </div>
+            <div class="info-chip">
+              <span class="info-label">角色</span>
+              <span class="info-value">{{ roleText }}</span>
+            </div>
+            <div class="info-chip">
+              <span class="info-label">认证</span>
+              <span class="info-value">{{ authText }}</span>
+            </div>
           </div>
-          <div class="info-item">
-            <span class="info-label">平台</span>
-            <span class="info-value">{{ state.repoInfo?.platform || '-' }}</span>
-          </div>
-          <div class="info-item">
-            <span class="info-label">分支</span>
-            <span class="info-value">{{ state.repoInfo?.branch || '-' }}</span>
-          </div>
-          <div class="info-item">
-            <span class="info-label">角色</span>
-            <span class="info-value">{{ roleText }}</span>
-          </div>
-          <div class="info-item info-item--wide">
+          <div class="repo-info__remote" :title="state.repoInfo?.remoteUrl || ''">
             <span class="info-label">远程</span>
-            <span class="info-value info-value--mono" :title="state.repoInfo?.remoteUrl || ''">{{ state.repoInfo?.remoteUrl || '-' }}</span>
-          </div>
-          <div class="info-item">
-            <span class="info-label">认证</span>
-            <span class="info-value">{{ authText }}</span>
+            <span class="info-value info-value--mono">{{ state.repoInfo?.remoteUrl || '-' }}</span>
           </div>
         </div>
 
@@ -119,7 +128,7 @@ async function refreshChanges() {
             <h3>快速提交</h3>
             <span class="kbd-hint">Ctrl + Enter</span>
           </div>
-          <textarea v-model="state.commitMessage" class="commit-textarea" placeholder="输入提交信息…" rows="3" />
+          <textarea v-model="state.commitMessage" class="commit-textarea" placeholder="输入提交信息…" rows="2" />
           <div class="commit-buttons">
             <button class="btn btn-success" type="button" :disabled="state.busy" @click="quickCommit">
               {{ state.busy ? '处理中…' : '一键提交' }}
@@ -132,28 +141,32 @@ async function refreshChanges() {
         <div class="operations-section">
           <h3>快速操作</h3>
           <div class="ops-grid">
-            <button class="btn btn-secondary" type="button" :disabled="state.busy" @click="pullChanges">拉取</button>
-            <button class="btn btn-secondary" type="button" :disabled="state.busy" @click="pullChangesForce">强制拉取</button>
-            <button class="btn btn-secondary" type="button" :disabled="state.busy" @click="pushChanges">推送</button>
-            <button class="btn btn-secondary" type="button" :disabled="state.busy" @click="stashChanges">暂存</button>
-            <button class="btn btn-secondary" type="button" :disabled="state.busy" @click="stashPop">恢复暂存</button>
-            <button class="btn btn-secondary" type="button" :disabled="state.busy" @click="createBranch">创建分支</button>
-            <button class="btn btn-secondary" type="button" :disabled="state.busy" @click="switchBranch">切换分支</button>
-            <button class="btn btn-secondary" type="button" @click="viewLog">查看日志</button>
-            <button class="btn btn-secondary" type="button" @click="viewDiff">查看差异</button>
-            <button class="btn btn-secondary" type="button" @click="openRepoFolder()">打开文件夹</button>
+            <button class="btn btn-secondary btn-op" type="button" :disabled="state.busy" @click="pullChanges">拉取</button>
+            <button class="btn btn-secondary btn-op" type="button" :disabled="state.busy" @click="pullChangesForce">强制拉取</button>
+            <button class="btn btn-secondary btn-op" type="button" :disabled="state.busy" @click="pushChanges">推送</button>
+            <button class="btn btn-secondary btn-op" type="button" :disabled="state.busy" @click="stashChanges">暂存</button>
+            <button class="btn btn-secondary btn-op" type="button" :disabled="state.busy" @click="stashPop">恢复暂存</button>
+            <button class="btn btn-secondary btn-op" type="button" :disabled="state.busy" @click="createBranch">创建分支</button>
+            <button class="btn btn-secondary btn-op" type="button" :disabled="state.busy" @click="switchBranch">切换分支</button>
+            <button class="btn btn-secondary btn-op" type="button" @click="viewLog">查看日志</button>
+            <button class="btn btn-secondary btn-op" type="button" @click="viewDiff">查看差异</button>
+            <button class="btn btn-secondary btn-op" type="button" @click="openRepoFolder()">打开文件夹</button>
           </div>
         </div>
 
         <div class="changes-section">
           <div class="section-header">
             <h3>文件变更</h3>
-            <button class="btn btn-sm btn-secondary" type="button" @click="refreshChanges">刷新</button>
+            <button class="btn btn-sm btn-secondary" type="button" @click="refreshChanges">
+              <AppIcon name="refresh" :size="13" /> 刷新
+            </button>
           </div>
           <div class="changes-list">
             <div v-if="!changeFiles.length" class="empty-state">暂无变更</div>
             <div v-for="(file, i) in changeFiles" :key="file.path + '-' + i" class="change-item">
-              <span class="change-icon" :title="file.change.label">{{ file.change.icon }}</span>
+              <span class="change-icon" :title="file.change.label" :data-kind="file.change.icon">
+                <AppIcon :name="file.change.icon" :size="15" />
+              </span>
               <span class="change-path">{{ file.path }}</span>
             </div>
           </div>

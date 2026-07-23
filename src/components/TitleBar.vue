@@ -1,6 +1,7 @@
 <script setup>
 import { ref } from 'vue';
 import { invoke } from '../utils/ipc.js';
+import AppIcon from './AppIcon.vue';
 
 defineProps({
   version: { type: String, default: '' }
@@ -25,7 +26,9 @@ refreshMax();
   <div class="title-bar" id="title-bar">
     <div class="title-bar-content">
       <div class="title-bar-title">
-        <span class="title-icon" aria-hidden="true">🌻</span>
+        <span class="title-icon" aria-hidden="true">
+          <AppIcon name="sunflower" :size="18" />
+        </span>
         <span class="title-text">向日葵Git仓库管理</span>
         <span v-if="version" class="title-version">v{{ version }}</span>
       </div>

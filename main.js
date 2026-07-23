@@ -705,9 +705,6 @@ ipcMain.handle('git-set-user', async (event, repoPath, username, email) => {
   }
 });
 
-/** 提交摘要 emoji，与 renderer 文件列表一致 */
-const COMMIT_EMOJI = { modified: '✏️', added: '➕', deleted: '🗑️', renamed: '🔄' };
-
 /** 根据 index/working_dir 判断变更类型（与 renderer.getFileChangeType 对齐） */
 function classifyFileChange(file) {
   const idx = String(file?.index ?? '').trim();
@@ -731,17 +728,17 @@ function countChangeTypes(status) {
 function generateCommitSummary(status) {
   const counts = countChangeTypes(status);
   const parts = [];
-  if (counts.modified) parts.push(`${COMMIT_EMOJI.modified} ${counts.modified} 修改`);
-  if (counts.added) parts.push(`${COMMIT_EMOJI.added} ${counts.added} 新增`);
-  if (counts.deleted) parts.push(`${COMMIT_EMOJI.deleted} ${counts.deleted} 删除`);
-  if (counts.renamed) parts.push(`${COMMIT_EMOJI.renamed} ${counts.renamed} 重命名`);
+  if (counts.modified) parts.push(`${counts.modified} 修改`);
+  if (counts.added) parts.push(`${counts.added} 新增`);
+  if (counts.deleted) parts.push(`${counts.deleted} 删除`);
+  if (counts.renamed) parts.push(`${counts.renamed} 重命名`);
   return parts.length ? ` [${parts.join(', ')}]` : '';
 }
 
 /** 去掉正文里已有的自动摘要/行数，避免重复拼接 */
 function stripAutoCommitMeta(message) {
   return String(message || '')
-    .replace(/\s*\[[^\]]*(?:✏️|➕|🗑️|🔄)[^\]]*\]/g, '')
+    .replace(/\s*\[[^\]]*(?:✏️|➕|🗑️|🔄|\d+\s*修改|\d+\s*新增|\d+\s*删除|\d+\s*重命名)[^\]]*\]/g, '')
     .replace(/\s*\+\d+\s+-\d+\s+行\s*$/g, '')
     .trim();
 }
@@ -772,23 +769,50 @@ async function getLineChangesFromCached(git) {
   return { insertions, deletions };
 }
 
-/** 拼接完整提交信息：正文 + 摘要(emoji 统计) + 行数 */
+/** 拼接完整提交信息：正文 + 摘要 + 行数 */
 function buildFullCommitMessage(rawMessage, summary, insertions, deletions) {
   const base = stripAutoCommitMeta(rawMessage) || 'Update';
   const lineChanges = (insertions || deletions) ? ` +${insertions} -${deletions} 行` : '';
   return base + summary + lineChanges;
 }
 
+function statusHasChanges(status, insertions = 0, deletions = 0) {
+  const counts = countChangeTypes(status);
+  return counts.modified + counts.added + counts.deleted + counts.renamed > 0
+    || insertions > 0 || deletions > 0;
+}
+
+/**
+ * 暂存并提交（统一生成真实提交信息）
+ * @returns {{ success:boolean, message?:string, error?:string, skipped?:boolean, insertions?:number, deletions?:number }}
+ */
+async function stageAndCommit(git, rawMessage, userConfig = null, { allowEmpty = false } = {}) {
+  await git.add(['-A']);
+  const status = await git.status();
+  const summary = generateCommitSummary(status);
+  const { insertions, deletions } = await getLineChangesFromCached(git);
+  const fullMessage = buildFullCommitMessage(rawMessage, summary, insertions, deletions);
+
+  if (!statusHasChanges(status, insertions, deletions)) {
+    if (allowEmpty) {
+      return { success: true, skipped: true, message: fullMessage, insertions, deletions };
+    }
+    return { success: false, error: '没有可提交的变更', message: fullMessage };
+  }
+
+  if (userConfig?.username && userConfig?.email) {
+    await git.addConfig('user.name', userConfig.username, false);
+    await git.addConfig('user.email', userConfig.email, false);
+  }
+
+  await git.commit(fullMessage);
+  return { success: true, message: fullMessage, insertions, deletions };
+}
+
 ipcMain.handle('git-commit', async (event, repoPath, message) => {
   try {
     const git = simpleGit(repoPath);
-    await git.add(['-A']);
-    const status = await git.status();
-    const summary = generateCommitSummary(status);
-    const { insertions, deletions } = await getLineChangesFromCached(git);
-    const fullMessage = buildFullCommitMessage(message, summary, insertions, deletions);
-    await git.commit(fullMessage);
-    return { success: true, message: fullMessage };
+    return await stageAndCommit(git, message);
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -964,12 +988,7 @@ function copyDirWithIgnore(srcDir, destDir) {
 
 /**
  * 同步主仓库到从仓库（支持多从仓）
- * @param {string} mainRepoPath - 主仓库路径
- * @param {Array<{path:string,config:object}>|string} subordinates - 从仓库列表 [{path,config}...]，或单个路径（兼容旧调用）
- * @param {string} commitMessage - 提交信息
- * @param {object} mainConfig - 主仓库配置
- * @param {object} [legacySubConfig] - 兼容旧 API：当 subordinates 为字符串时使用
- * @returns {{success:boolean, error?:string, results?:Array<{path:string,success:boolean,error?:string}>}}
+ * @returns {{success:boolean, error?:string, message?:string, results?:Array}}
  */
 ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinates, commitMessage, mainConfig = null, legacySubConfig = null) => {
   const subList = Array.isArray(subordinates)
@@ -980,31 +999,25 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinates, commitMes
 
   try {
     const mainGit = simpleGit(mainRepoPath);
-
-    await mainGit.add(['-A']);
-    const status = await mainGit.status();
-    const counts = countChangeTypes(status);
-    const summary = generateCommitSummary(status);
-    const { insertions, deletions } = await getLineChangesFromCached(mainGit);
-    const fullMessage = buildFullCommitMessage(commitMessage, summary, insertions, deletions);
-
-    const hasChanges = counts.modified + counts.added + counts.deleted + counts.renamed > 0
-      || insertions > 0 || deletions > 0;
-    if (!hasChanges) {
-      return { success: false, error: '没有可提交的变更' };
+    const mainCommit = await stageAndCommit(mainGit, commitMessage, mainConfig);
+    if (!mainCommit.success) {
+      return { success: false, error: mainCommit.error || '主仓库提交失败', message: mainCommit.message };
     }
 
-    if (mainConfig?.username && mainConfig?.email) {
-      await mainGit.addConfig('user.name', mainConfig.username, false);
-      await mainGit.addConfig('user.email', mainConfig.email, false);
-    }
-    await mainGit.commit(fullMessage);
-
+    const fullMessage = mainCommit.message;
     const envOverrides = buildGitEnvOverrides(mainConfig);
     const pushRes = await runGitCommand(mainRepoPath, ['push', 'origin'], envOverrides);
-    if (!pushRes.success) throw new Error(pushRes.stderr || pushRes.error || '主仓库 push 失败');
+    if (!pushRes.success) {
+      return {
+        success: false,
+        error: pushRes.stderr || pushRes.error || '主仓库 push 失败',
+        message: fullMessage
+      };
+    }
 
-    if (subList.length === 0) return { success: true, message: fullMessage };
+    if (subList.length === 0) {
+      return { success: true, message: fullMessage, results: [] };
+    }
 
     let mainRemoteUrl = '';
     try {
@@ -1012,7 +1025,10 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinates, commitMes
     } catch (e) {}
 
     const results = [];
-    for (const { path: subPath, config: subConfig } of subList) {
+    for (const item of subList) {
+      const subPath = item?.path;
+      const subName = item?.name || path.basename(subPath || '') || subPath;
+      const subConfig = item?.config || {};
       try {
         if (!subPath || !fs.existsSync(subPath)) {
           throw new Error('从仓库路径无效或不存在');
@@ -1023,31 +1039,38 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinates, commitMes
           subRemoteUrl = getFirstRemoteUrl(await subGit.getRemotes(true)).replace(/\/$/, '');
         } catch (e) {}
 
-        const sameRemote = mainRemoteUrl && subRemoteUrl && mainRemoteUrl === subRemoteUrl;
+        const sameRemote = !!(mainRemoteUrl && subRemoteUrl && mainRemoteUrl === subRemoteUrl);
         const effectiveConfig = subConfig || mainConfig;
 
         if (sameRemote) {
           const subEnv = buildGitEnvOverrides(effectiveConfig);
           const pullRes = await runGitCommand(subPath, ['pull', 'origin'], subEnv);
           if (!pullRes.success) throw new Error(pullRes.stderr || pullRes.error || '从仓库 pull 失败');
-          results.push({ path: subPath, success: true });
+          results.push({
+            path: subPath,
+            name: subName,
+            success: true,
+            mode: 'pull',
+            detail: '同远程，已 pull',
+            commitMessage: fullMessage
+          });
           continue;
         }
 
         const items = fs.readdirSync(subPath);
-        for (const item of items) {
-          if (item === '.git') continue;
-          const itemPath = path.join(subPath, item);
+        for (const name of items) {
+          if (name === '.git') continue;
+          const itemPath = path.join(subPath, name);
           const stat = fs.statSync(itemPath);
           if (stat.isDirectory()) fs.rmSync(itemPath, { recursive: true, force: true });
           else fs.unlinkSync(itemPath);
         }
 
         const mainItems = fs.readdirSync(mainRepoPath);
-        for (const item of mainItems) {
-          if (shouldSyncIgnore(item)) continue;
-          const srcPath = path.join(mainRepoPath, item);
-          const destPath = path.join(subPath, item);
+        for (const name of mainItems) {
+          if (shouldSyncIgnore(name)) continue;
+          const srcPath = path.join(mainRepoPath, name);
+          const destPath = path.join(subPath, name);
           const stat = fs.statSync(srcPath);
           if (stat.isDirectory()) {
             if (!fs.existsSync(destPath)) fs.mkdirSync(destPath, { recursive: true });
@@ -1057,41 +1080,46 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinates, commitMes
           }
         }
 
-        await subGit.add(['-A']);
-        const subStatus = await subGit.status();
-        const subCounts = countChangeTypes(subStatus);
-        const subLines = await getLineChangesFromCached(subGit);
-        const subHasChanges = subCounts.modified + subCounts.added + subCounts.deleted + subCounts.renamed > 0
-          || subLines.insertions > 0 || subLines.deletions > 0;
+        const userConfig = effectiveConfig?.username && effectiveConfig?.email
+          ? effectiveConfig
+          : mainConfig?.username && mainConfig?.email
+            ? mainConfig
+            : null;
+        if (!userConfig) throw new Error('请先配置平台的用户名和邮箱');
 
-        if (subHasChanges) {
-          const userConfig = effectiveConfig?.username && effectiveConfig?.email
-            ? effectiveConfig
-            : mainConfig?.username && mainConfig?.email
-              ? mainConfig
-              : null;
-          if (!userConfig) throw new Error('请先配置平台的用户名和邮箱');
-
-          await subGit.addConfig('user.name', userConfig.username, false);
-          await subGit.addConfig('user.email', userConfig.email, false);
-          await subGit.commit(fullMessage);
-        }
+        const subCommit = await stageAndCommit(subGit, fullMessage, userConfig, { allowEmpty: true });
+        if (!subCommit.success) throw new Error(subCommit.error || '从仓库提交失败');
 
         const subEnv = buildGitEnvOverrides(effectiveConfig);
         const subPushRes = await runGitCommand(subPath, ['push', 'origin'], subEnv);
         if (!subPushRes.success) throw new Error(subPushRes.stderr || subPushRes.error || '从仓库 push 失败');
 
-        results.push({ path: subPath, success: true });
+        results.push({
+          path: subPath,
+          name: subName,
+          success: true,
+          mode: subCommit.skipped ? 'copy-push' : 'copy-commit',
+          detail: subCommit.skipped
+            ? '文件已同步，工作区无新增变更，已推送'
+            : `已提交并推送`,
+          commitMessage: subCommit.skipped ? fullMessage : subCommit.message
+        });
       } catch (subErr) {
-        const errMsg = subErr?.message ?? String(subErr);
-        results.push({ path: subPath, success: false, error: errMsg });
+        results.push({
+          path: subPath,
+          name: subName,
+          success: false,
+          mode: 'error',
+          error: subErr?.message ?? String(subErr),
+          commitMessage: fullMessage
+        });
       }
     }
 
-    const allOk = results.every(r => r.success);
+    const allOk = results.every((r) => r.success);
     return {
       success: allOk,
-      error: allOk ? undefined : results.find(r => !r.success)?.error,
+      error: allOk ? undefined : results.find((r) => !r.success)?.error,
       message: fullMessage,
       results
     };

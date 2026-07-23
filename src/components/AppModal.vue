@@ -3,6 +3,7 @@ import { computed, ref, watch, nextTick } from 'vue';
 import { useAppStore } from '../composables/useAppStore.js';
 import { useMarkdown } from '../composables/useMarkdown.js';
 import { downloadUpdate, installUpdate } from '../composables/useUpdates.js';
+import AppIcon from './AppIcon.vue';
 import PlatformConfigDialog from './dialogs/PlatformConfigDialog.vue';
 import SyncConfigDialog from './dialogs/SyncConfigDialog.vue';
 import CloneDialog from './dialogs/CloneDialog.vue';
@@ -153,7 +154,7 @@ function onInputKeydown(e) {
         <template v-else-if="modal.type === 'update-available'">
           <div class="form-group">
             <div class="update-banner">
-              <span class="update-banner__icon">🎉</span>
+              <span class="update-banner__icon"><AppIcon name="spark" :size="22" /></span>
               <p class="update-banner__text">发现新版本 <strong class="update-banner__version">v{{ modal.version }}</strong></p>
             </div>
             <div v-if="modal.releaseNotes" class="update-notes-wrap">
@@ -176,7 +177,7 @@ function onInputKeydown(e) {
         <template v-else-if="modal.type === 'update-downloaded'">
           <div class="form-group">
             <div class="update-banner update-banner--success">
-              <span class="update-banner__icon">✅</span>
+              <span class="update-banner__icon"><AppIcon name="check" :size="22" /></span>
               <p class="update-banner__text">更新 <strong class="update-banner__version">v{{ modal.version }}</strong> 已下载完成</p>
             </div>
             <p class="update-dialog-desc">点击「立即重启」应用更新，或选「稍后」在关闭/下次启动时自动安装。</p>

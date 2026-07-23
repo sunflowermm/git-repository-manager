@@ -2,6 +2,7 @@
 import { ref, watch, nextTick, computed } from 'vue';
 import Sortable from 'sortablejs';
 import { useAppStore } from '../composables/useAppStore.js';
+import AppIcon from './AppIcon.vue';
 
 const store = useAppStore();
 const {
@@ -119,8 +120,11 @@ watch([filteredRepos, isFiltered, isLoading], async () => {
               v-if="!repo.loading"
               class="btn-icon repo-remove-btn"
               title="从列表移除"
+              type="button"
               @click.stop="removeRepoFromList(repo.path)"
-            >✕</button>
+            >
+              <AppIcon name="close" :size="12" />
+            </button>
           </li>
         </ul>
         <div v-else-if="isLoading" class="empty-state empty-state--loading">

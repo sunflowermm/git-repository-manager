@@ -1,5 +1,5 @@
 /**
- * Electron IPC 使用 structuredClone，无法克隆 Vue Proxy。
+ * Electron IPC 使用 structuredClone，无法克隆 Vue Proxy
  * 发送前转成纯 JSON 可序列化数据。
  */
 export function cloneForIpc(value) {

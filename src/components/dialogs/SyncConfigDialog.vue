@@ -24,6 +24,13 @@ const availableSubs = computed(() =>
 
 const groups = computed(() => Object.entries(state.syncConfig.sync_groups || {}));
 
+function isSubDisabled(name) {
+  if (!groupedRepos.value.has(name)) return false;
+  const groupId = state.syncConfig.repo_to_group[name];
+  const group = groupId ? state.syncConfig.sync_groups[groupId] : null;
+  return !!group && group.main !== mainRepo.value;
+}
+
 function toggleSub(name, checked) {
   if (checked) {
     if (!selectedSubs.value.includes(name)) selectedSubs.value.push(name);
@@ -103,49 +110,66 @@ onMounted(() => emit('ready', onConfirm));
     <div class="sync-card">
       <div class="sync-card-header">新建同步组</div>
       <div class="sync-card-body">
-        <div class="form-group">
+        <div class="form-group form-group--tight">
           <label class="form-label">主仓库</label>
           <select v-model="mainRepo" class="form-select">
             <option value="">请选择</option>
             <option v-for="r in state.repos" :key="r.path" :value="r.name">{{ r.name }}</option>
           </select>
         </div>
-        <div class="form-group">
-          <label class="form-label">从仓库</label>
+        <div class="form-group form-group--fill">
+          <label class="form-label">
+            从仓库
+            <span class="sync-count">{{ selectedSubs.length }}/{{ availableSubs.length }}</span>
+          </label>
           <div id="sync-subordinate-repos" class="sync-scroll">
             <label
               v-for="r in availableSubs"
               :key="r.path"
               class="sync-check-item"
+              :class="{ 'sync-check-item--disabled': isSubDisabled(r.name) }"
             >
               <input
                 type="checkbox"
                 class="form-checkbox"
                 :value="r.name"
-                :disabled="groupedRepos.has(r.name) && state.syncConfig.repo_to_group[r.name] && state.syncConfig.sync_groups[state.syncConfig.repo_to_group[r.name]]?.main !== mainRepo"
+                :disabled="isSubDisabled(r.name)"
                 :checked="selectedSubs.includes(r.name)"
                 @change="toggleSub(r.name, $event.target.checked)"
               >
-              <span>{{ r.name }}<template v-if="groupedRepos.has(r.name)"> (已在同步组中)</template></span>
+              <span class="sync-check-name">{{ r.name }}</span>
+              <span v-if="groupedRepos.has(r.name)" class="sync-check-tag">已分组</span>
             </label>
+            <div v-if="!availableSubs.length" class="empty-state empty-state--compact">暂无可用仓库</div>
           </div>
         </div>
-        <button class="btn btn-primary" type="button" @click="saveGroup">保存同步组</button>
-        <button class="btn btn-danger" type="button" style="margin-left:8px;" @click="clearAll">清空全部</button>
+        <div class="sync-actions">
+          <button class="btn btn-primary" type="button" @click="saveGroup">保存同步组</button>
+          <button class="btn btn-danger" type="button" @click="clearAll">清空全部</button>
+        </div>
       </div>
     </div>
 
     <div class="sync-card">
-      <div class="sync-card-header">当前同步组</div>
-      <div class="sync-card-body">
+      <div class="sync-card-header">
+        当前同步组
+        <span class="sync-count">{{ groups.length }}</span>
+      </div>
+      <div class="sync-card-body sync-card-body--list">
         <div class="sync-scroll">
-          <div v-if="!groups.length" class="empty-state">暂无同步组</div>
+          <div v-if="!groups.length" class="empty-state empty-state--compact">暂无同步组</div>
           <div v-for="[id, group] in groups" :key="id" class="sync-group-item">
-            <div><strong>主仓库:</strong> {{ group.main }}</div>
-            <div><strong>从仓库:</strong> {{ group.subordinates?.join(', ') || '无' }}</div>
-            <div class="sync-group-actions">
-              <button class="btn btn-danger" type="button" @click="removeGroup(id)">删除</button>
+            <div class="sync-group-meta">
+              <div class="sync-group-line">
+                <span class="sync-group-k">主</span>
+                <strong class="sync-group-v">{{ group.main }}</strong>
+              </div>
+              <div class="sync-group-line">
+                <span class="sync-group-k">从</span>
+                <span class="sync-group-v sync-group-v--subs">{{ group.subordinates?.join('、') || '无' }}</span>
+              </div>
             </div>
+            <button class="btn btn-danger sync-group-del" type="button" @click="removeGroup(id)">删除</button>
           </div>
         </div>
       </div>

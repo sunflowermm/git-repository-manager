@@ -18,6 +18,13 @@ const inputValue = ref('');
 const inputEl = ref(null);
 
 const modal = computed(() => state.modal);
+const modalSizeClass = computed(() => {
+  const m = modal.value;
+  if (!m) return '';
+  if (m.wide || m.type === 'sync-config') return 'modal-content--wide modal-content--fill';
+  if (m.type === 'platform-config') return 'modal-content--lg';
+  return '';
+});
 const showFooterPrimary = computed(() => modal.value && !modal.value.hidePrimary);
 const primaryLabel = computed(() => {
   if (!modal.value) return '确定';
@@ -110,7 +117,7 @@ function onInputKeydown(e) {
     aria-modal="true"
     @click.self="onOverlayClick"
   >
-    <div class="modal-content" :class="{ 'modal-content--sync': modal.wide || modal.type === 'sync-config' }">
+    <div class="modal-content" :class="modalSizeClass">
       <div class="modal-header">{{ modal.title }}</div>
       <div class="modal-body">
         <template v-if="modal.type === 'confirm'">
@@ -126,20 +133,19 @@ function onInputKeydown(e) {
               type="text"
               class="form-input"
               :placeholder="modal.placeholder || ''"
-              style="width:100%;margin-top:8px;"
               @keydown="onInputKeydown"
             >
           </div>
         </template>
 
         <template v-else-if="modal.type === 'pre'">
-          <pre style="font-family:var(--font-mono);font-size:12px;white-space:pre-wrap;max-height:400px;overflow:auto;">{{ modal.content }}</pre>
+          <pre class="modal-pre">{{ modal.content }}</pre>
         </template>
 
         <template v-else-if="modal.type === 'switch-branch'">
           <div class="form-group">
             <label class="form-label">选择分支</label>
-            <div style="display:flex;flex-direction:column;gap:6px;max-height:320px;overflow:auto;">
+            <div class="branch-pick-list">
               <button
                 v-for="b in modal.branches"
                 :key="b"

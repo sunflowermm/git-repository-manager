@@ -70,16 +70,18 @@ onMounted(() => emit('ready', onConfirm));
     </div>
     <div class="form-group">
       <label class="form-label">选择仓库</label>
-      <div class="sync-scroll" style="max-height:280px;">
-        <label v-for="r in state.repos" :key="r.path" class="sync-check-item">
+      <div class="check-list">
+        <label v-for="r in state.repos" :key="r.path" class="check-list-item">
           <input
             type="checkbox"
             class="form-checkbox"
             :checked="form.selected.includes(r.path)"
             @change="toggle(r.path, $event.target.checked)"
           >
-          <span>{{ r.name }} ({{ r.platform }})</span>
+          <span class="sync-check-name">{{ r.name }}</span>
+          <span class="sync-check-tag">{{ r.platform }}</span>
         </label>
+        <div v-if="!state.repos.length" class="empty-state empty-state--compact">暂无仓库</div>
       </div>
     </div>
   </div>

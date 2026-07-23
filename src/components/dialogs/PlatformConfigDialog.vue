@@ -61,10 +61,17 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div>
-    <div class="form-group" style="margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border-color);">
+  <div class="platform-config">
+    <div class="form-section">
       <label class="form-label">应用更新代理端口（可选）</label>
-      <input v-model="proxyPort" type="number" class="form-input" min="1" max="65535" placeholder="如 7890（Clash / V2Ray 本地 HTTP 端口）">
+      <input
+        v-model="proxyPort"
+        type="number"
+        class="form-input"
+        min="1"
+        max="65535"
+        placeholder="如 7890（Clash / V2Ray 本地 HTTP 端口）"
+      >
       <small class="form-hint">检查或下载更新直连失败时，自动改用 127.0.0.1:该端口 重试</small>
     </div>
 
@@ -79,7 +86,7 @@ onMounted(async () => {
       >{{ p }}</button>
     </div>
 
-    <div v-for="p in PLATFORMS" :key="p" class="platform-panel" :style="{ display: active === p ? 'block' : 'none' }">
+    <div v-for="p in PLATFORMS" v-show="active === p" :key="p" class="platform-panel">
       <div class="form-group">
         <label class="form-label">认证方式</label>
         <select v-model="drafts[p].auth_type" class="form-select">
@@ -109,14 +116,14 @@ onMounted(async () => {
       </div>
       <template v-if="p === 'GitHub' && drafts[p].auth_type === 'password'">
         <div class="form-group">
-          <label style="display:flex;align-items:center;gap:10px;">
+          <label class="form-inline-check">
             <input v-model="drafts[p].use_proxy" type="checkbox" class="form-checkbox">
             <span>使用代理（HTTPS 拉取/推送更顺畅）</span>
           </label>
         </div>
-        <div v-if="drafts[p].use_proxy" class="form-group">
+        <div v-if="drafts[p].use_proxy" class="form-group form-stack">
           <label class="form-label">代理地址</label>
-          <select class="form-select" style="margin-bottom:8px;" @change="onProxyPreset(p, $event.target.value)">
+          <select class="form-select" @change="onProxyPreset(p, $event.target.value)">
             <option value="">自定义（下方填写）</option>
             <option value="https://ghproxy.net/">ghproxy.net</option>
             <option value="https://gh-proxy.com/">gh-proxy.com</option>

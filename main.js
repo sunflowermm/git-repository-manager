@@ -120,6 +120,9 @@ function createWindow() {
 
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
+// 避免本机环境残留的无效 GH_TOKEN 导致 GitHub 下载被当成未授权而返回 404
+delete process.env.GH_TOKEN;
+delete process.env.GITHUB_TOKEN;
 
 const CHECK_TIMEOUT_MS = 30000;
 let isCheckingUpdate = false;
@@ -145,12 +148,27 @@ async function setUpdateProxyEnabled(enabled) {
     if (!port) return false;
     await ses.setProxy({ proxyRules: `http://127.0.0.1:${port}` });
     updateProxyActive = true;
-    sendUpdateLog(`更新: 已启用本地代理 127.0.0.1:${port}`, 'info');
     return true;
   }
-  await ses.setProxy({ mode: 'system' });
+  await ses.setProxy({ mode: 'direct' });
   updateProxyActive = false;
   return true;
+}
+
+function shortUpdateError(err) {
+  const raw = String(err?.message || err || '未知错误');
+  if (/latest\.yml/i.test(raw) && /404|Cannot find/i.test(raw)) {
+    return '无法获取更新清单 latest.yml（网络/代理或发行附件未就绪）';
+  }
+  if (/timeout|ETIMEDOUT|timed out/i.test(raw)) {
+    return '检查更新超时，请检查网络或代理';
+  }
+  if (/ENOTFOUND|ECONNREFUSED|net::/i.test(raw)) {
+    return '网络连接失败，请检查网络或代理';
+  }
+  // 截断 electron-updater 超长堆栈，避免刷屏
+  const firstLine = raw.split(/\r?\n/)[0].trim();
+  return firstLine.length > 180 ? `${firstLine.slice(0, 180)}…` : firstLine;
 }
 
 function sendUpdateStatus(status, payload = {}) {
@@ -167,11 +185,16 @@ function sendUpdateLog(message, level = 'info') {
 
 function formatErrorForLog(err) {
   if (!err) return '未知错误';
-  const msg = err.message || String(err);
-  const stack = err.stack;
-  if (!stack || stack === msg) return msg;
-  const lines = stack.split('\n').slice(0, 8);
-  return `[错误] ${msg}\n${lines.join('\n')}`;
+  return `[错误] ${shortUpdateError(err)}`;
+}
+
+/** 有代理时优先走代理，失败再直连；无代理则只直连 */
+function getUpdateNetworkAttempts() {
+  const port = getUpdateProxyPort();
+  const attempts = [];
+  if (port) attempts.push({ useProxy: true, label: `代理 ${port}` });
+  attempts.push({ useProxy: false, label: '直连' });
+  return attempts;
 }
 
 function checkForUpdatesWithTimeout() {
@@ -265,21 +288,31 @@ function checkForUpdatesWithTimeout() {
 }
 
 async function performUpdateCheck() {
-  sendUpdateLog('更新: 检查中（直连）', 'info');
-  try {
-    await checkForUpdatesWithTimeout();
-    sendUpdateLog('更新: 检查完成', 'info');
-    return;
-  } catch (err) {
-    const port = getUpdateProxyPort();
-    if (!port || updateProxyActive) throw err;
-    sendUpdateLog(`更新: 直连失败（${err.message || err}），尝试代理端口 ${port}`, 'warning');
-    const ok = await setUpdateProxyEnabled(true);
-    if (!ok) throw err;
-    sendUpdateLog('更新: 通过代理重新检查', 'info');
-    await checkForUpdatesWithTimeout();
-    sendUpdateLog('更新: 代理检查完成', 'info');
+  const attempts = getUpdateNetworkAttempts();
+  let lastErr = null;
+
+  for (let i = 0; i < attempts.length; i++) {
+    const attempt = attempts[i];
+    await setUpdateProxyEnabled(attempt.useProxy);
+    if (attempt.useProxy) {
+      sendUpdateLog(`更新: 已启用本地代理 127.0.0.1:${getUpdateProxyPort()}`, 'info');
+    }
+    sendUpdateLog(`更新: 检查中（${attempt.label}）`, 'info');
+    try {
+      await checkForUpdatesWithTimeout();
+      sendUpdateLog('更新: 检查完成', 'info');
+      return;
+    } catch (err) {
+      lastErr = err;
+      const more = i < attempts.length - 1;
+      sendUpdateLog(
+        `更新: ${attempt.label}失败（${shortUpdateError(err)}）${more ? '，尝试下一种方式' : ''}`,
+        more ? 'warning' : 'error'
+      );
+    }
   }
+
+  throw lastErr || new Error('检查更新失败');
 }
 
 function doCheckForUpdates() {
@@ -287,7 +320,7 @@ function doCheckForUpdates() {
   setImmediate(() => {
     performUpdateCheck().catch((err) => {
       sendUpdateLog(formatErrorForLog(err), 'error');
-      sendUpdateStatus('error', { message: err.message || '检查更新失败' });
+      sendUpdateStatus('error', { message: shortUpdateError(err) });
     });
   });
 }
@@ -338,35 +371,33 @@ ipcMain.handle('check-for-updates', async () => {
     return { success: true };
   } catch (err) {
     sendUpdateLog(formatErrorForLog(err), 'error');
-    sendUpdateStatus('error', { message: err.message || '检查更新失败' });
-    return { success: false, error: err.message };
+    sendUpdateStatus('error', { message: shortUpdateError(err) });
+    return { success: false, error: shortUpdateError(err) };
   }
 });
 
 ipcMain.handle('download-update', async () => {
-  const tryDownload = async () => {
-    sendUpdateLog(updateProxyActive ? '更新: 通过代理开始下载' : '更新: 开始下载', 'info');
-    await autoUpdater.downloadUpdate();
-  };
-  try {
-    await tryDownload();
-    return { success: true };
-  } catch (e) {
-    const port = getUpdateProxyPort();
-    if (port && !updateProxyActive) {
-      sendUpdateLog(`更新: 下载直连失败，尝试代理端口 ${port}`, 'warning');
-      try {
-        await setUpdateProxyEnabled(true);
-        await tryDownload();
-        return { success: true };
-      } catch (e2) {
-        sendUpdateLog(formatErrorForLog(e2), 'error');
-        return { success: false, error: e2.message };
-      }
+  const attempts = getUpdateNetworkAttempts();
+  let lastErr = null;
+
+  for (let i = 0; i < attempts.length; i++) {
+    const attempt = attempts[i];
+    await setUpdateProxyEnabled(attempt.useProxy);
+    sendUpdateLog(`更新: 开始下载（${attempt.label}）`, 'info');
+    try {
+      await autoUpdater.downloadUpdate();
+      return { success: true };
+    } catch (e) {
+      lastErr = e;
+      const more = i < attempts.length - 1;
+      sendUpdateLog(
+        `更新: 下载${attempt.label}失败（${shortUpdateError(e)}）${more ? '，尝试下一种方式' : ''}`,
+        more ? 'warning' : 'error'
+      );
     }
-    sendUpdateLog(formatErrorForLog(e), 'error');
-    return { success: false, error: e.message };
   }
+
+  return { success: false, error: shortUpdateError(lastErr) };
 });
 
 ipcMain.handle('install-update', async () => {

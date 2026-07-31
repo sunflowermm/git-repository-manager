@@ -13,6 +13,7 @@ const {
   quickCommit,
   commitAndPush,
   commitAndSync,
+  syncSubsOnly,
   pullChanges,
   pullChangesForce,
   pushChanges,
@@ -178,7 +179,24 @@ async function refreshChanges() {
               {{ state.busy ? '处理中…' : '一键提交' }}
             </button>
             <button class="btn btn-info" type="button" :disabled="state.busy" @click="commitAndPush">提交并推送</button>
-            <button class="btn btn-warning" type="button" :disabled="state.busy" @click="commitAndSync">提交并同步</button>
+            <button
+              class="btn btn-warning"
+              type="button"
+              :disabled="state.busy"
+              title="有变更则先提交；无变更也会同步到从仓（适合拉取后）"
+              @click="commitAndSync"
+            >
+              提交并同步
+            </button>
+            <button
+              class="btn btn-secondary"
+              type="button"
+              :disabled="state.busy"
+              title="不新建提交：推送主仓当前状态并复制到从仓"
+              @click="syncSubsOnly"
+            >
+              同步从仓
+            </button>
           </div>
         </div>
 

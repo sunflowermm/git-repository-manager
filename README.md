@@ -2,7 +2,7 @@
 
 基于 **Electron + Vue 3** 的桌面端 Git 仓库管理工具。统一管理 GitHub / Gitee / GitCode / GitLab 等平台上的本地仓库，支持一键提交、推送、主从同步与自动更新。
 
-当前发行版：**v1.2.10**
+当前发行版：**v1.2.11**
 
 ## 界面预览
 
@@ -133,7 +133,8 @@ npm run publish      # 构建并发布多平台发行版
 |------|------|
 | 一键提交 | `git add -A` 后提交；信息含文件类型摘要与行数 |
 | 提交并推送 | 提交后 `git push` |
-| 提交并同步 | 主仓库提交并同步到从仓库 |
+| 提交并同步 | 有变更则提交；无变更也继续同步到从仓（适合拉取后） |
+| 同步从仓 | 不新建提交，推送主仓当前状态并复制到从仓 |
 | 拉取 / 强制拉取 | 拉取远程；强制拉取会覆盖本地冲突（慎用） |
 | 推送 | 推送已有本地提交 |
 | 暂存 / 恢复暂存 | `stash` / `stash pop` |
@@ -213,7 +214,7 @@ git config --global user.email "your@email.com"
 
 ## 更新日志
 
-详见 [history/](history/)（如 [v1.2.10](history/v1.2.10.md)）。界面截图见 [docs/screenshots/](docs/screenshots/)。
+详见 [history/](history/)（如 [v1.2.11](history/v1.2.11.md)）。界面截图见 [docs/screenshots/](docs/screenshots/)。
 
 ## 贡献
 

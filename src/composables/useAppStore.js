@@ -500,21 +500,44 @@ export function useAppStore() {
   }
 
   async function commitAndSync() {
+    await runSyncFlow({ commitMode: 'optional', label: '提交并同步' });
+  }
+
+  /** 不强制本地提交：主仓已拉取/已提交时，仍可推送并复制到从仓 */
+  async function syncSubsOnly() {
+    await runSyncFlow({ commitMode: 'never', label: '同步从仓' });
+  }
+
+  async function runSyncFlow({ commitMode = 'optional', label = '同步' } = {}) {
     if (state.busy || !checkRepoSelected()) return;
     const mainRepo = state.currentRepo;
     const role = getRepoRole(mainRepo.name);
     const subordinates = role === 'main' ? getSubordinates(mainRepo.name) : [];
     if (role !== 'main' || subordinates.length === 0) {
+      if (commitMode === 'never') {
+        logRepo(mainRepo.name, '当前不是主仓库或无从仓库，无法同步从仓', 'warning');
+        showRepoMessage(mainRepo.name, '请先在同步配置里把当前仓设为主仓库并添加从仓', 'warning');
+        return;
+      }
       logRepo(mainRepo.name, '当前不是主仓库或无从仓库，改为普通推送', 'info');
       await commitAndPush();
       return;
     }
+
     const nonce = state.selectionNonce;
-    const message = await getCommitMessage();
-    if (!message) return;
+    let message = '';
+    if (commitMode === 'never') {
+      message = composeCommitPayload().trim() || `Update: ${formatCommitStamp()}`;
+    } else {
+      message = await getCommitMessage();
+      if (!message) return;
+    }
+
     state.busy = true;
-    logRepo(mainRepo.name, `开始同步推送 -> ${subordinates.join(', ')}`, 'info');
-    logRepo(mainRepo.name, `拟提交信息: ${oneLine(message)}`, 'info');
+    logRepo(mainRepo.name, `开始${label} -> ${subordinates.join(', ')}`, 'info');
+    if (commitMode !== 'never') {
+      logRepo(mainRepo.name, `拟提交信息: ${oneLine(message)}`, 'info');
+    }
     try {
       const config = getRepoConfigFor(mainRepo);
       const subList = [];
@@ -531,27 +554,41 @@ export function useAppStore() {
         subList.push({ path: subRepo.path, name: subRepo.name, config: subConfig });
       }
       if (subList.length === 0) {
+        if (commitMode === 'never') {
+          throw new Error('没有可同步的从仓库');
+        }
         logRepo(mainRepo.name, '没有可同步的从仓库，改为普通推送', 'warning');
         state.busy = false;
         await commitAndPush();
         return;
       }
 
-      const syncResult = await invoke('sync-repos', mainRepo.path, subList, message, config);
+      const syncResult = await invoke(
+        'sync-repos',
+        mainRepo.path,
+        subList,
+        message,
+        config,
+        null,
+        { commitMode }
+      );
       const realMsg = oneLine(syncResult.message || message);
 
+      if (syncResult.mainCommitSkipped) {
+        logRepo(mainRepo.name, '主仓无新本地变更，已跳过提交，继续推送/同步从仓', 'info');
+      }
       if (syncResult.message) {
-        logRepo(mainRepo.name, `实际提交信息: ${realMsg}`, 'info');
+        logRepo(mainRepo.name, `同步基准信息: ${realMsg}`, 'info');
       }
 
       for (const r of syncResult.results || []) {
-        const label = r.name || r.path || '从仓库';
+        const labelSub = r.name || r.path || '从仓库';
         if (r.success) {
           const detail = r.detail || (r.mode === 'pull' ? '同远程已 pull' : '同步完成');
           const msgPart = r.commitMessage ? `；提交: ${oneLine(r.commitMessage)}` : '';
-          logRepo(mainRepo.name, `从仓库「${label}」${detail}${msgPart}`, 'success');
+          logRepo(mainRepo.name, `从仓库「${labelSub}」${detail}${msgPart}`, 'success');
         } else {
-          logRepo(mainRepo.name, `从仓库「${label}」失败: ${r.error || '未知错误'}`, 'error');
+          logRepo(mainRepo.name, `从仓库「${labelSub}」失败: ${r.error || '未知错误'}`, 'error');
         }
       }
 
@@ -561,15 +598,15 @@ export function useAppStore() {
 
       const okCount = (syncResult.results || []).filter((r) => r.success).length;
       const total = (syncResult.results || []).length;
-      logRepo(mainRepo.name, `同步完成 ${okCount}/${total}；提交信息: ${realMsg}`, 'success');
-      showRepoMessage(mainRepo.name, `同步完成 ${okCount}/${total}\n${realMsg}`, 'success');
-      if (nonce === state.selectionNonce) {
+      logRepo(mainRepo.name, `${label}完成 ${okCount}/${total}；基准: ${realMsg}`, 'success');
+      showRepoMessage(mainRepo.name, `${label}完成 ${okCount}/${total}\n${realMsg}`, 'success');
+      if (nonce === state.selectionNonce && !syncResult.mainCommitSkipped && commitMode !== 'never') {
         resetCommitComposer(undefined, { clearNote: true });
       }
       await refreshRepoList(true);
     } catch (error) {
-      logRepo(mainRepo.name, `同步失败: ${error.message}`, 'error');
-      showRepoMessage(mainRepo.name, `同步失败: ${error.message}`, 'error');
+      logRepo(mainRepo.name, `${label}失败: ${error.message}`, 'error');
+      showRepoMessage(mainRepo.name, `${label}失败: ${error.message}`, 'error');
     } finally {
       state.busy = false;
     }
@@ -812,6 +849,7 @@ export function useAppStore() {
     quickCommit,
     commitAndPush,
     commitAndSync,
+    syncSubsOnly,
     pullChanges,
     pullChangesForce,
     pushChanges,

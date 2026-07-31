@@ -1154,23 +1154,56 @@ async function untrackIgnoredFiles(git) {
 
 /**
  * 同步主仓库到从仓库（支持多从仓）
- * @returns {{success:boolean, error?:string, message?:string, results?:Array}}
+ * @param {string} commitMessage
+ * @param {object|null} mainConfig
+ * @param {object|null} legacySubConfig
+ * @param {{ commitMode?: 'optional'|'never'|'required' }} [options]
+ *   - optional（默认）：有变更则提交，无变更则跳过提交继续同步（拉取后同步场景）
+ *   - never：不提交，只推送主仓（可已是最新）并复制到从仓
+ *   - required：无变更则失败
  */
-ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinates, commitMessage, mainConfig = null, legacySubConfig = null) => {
+ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinates, commitMessage, mainConfig = null, legacySubConfig = null, options = {}) => {
   const subList = Array.isArray(subordinates)
     ? subordinates
     : typeof subordinates === 'string' && subordinates
       ? [{ path: subordinates, config: legacySubConfig || {} }]
       : [];
 
+  const commitMode = options?.commitMode === 'never' || options?.commitMode === 'required'
+    ? options.commitMode
+    : 'optional';
+
   try {
     const mainGit = simpleGit(mainRepoPath);
-    const mainCommit = await stageAndCommit(mainGit, commitMessage, mainConfig);
-    if (!mainCommit.success) {
-      return { success: false, error: mainCommit.error || '主仓库提交失败', message: mainCommit.message };
+    let fullMessage = String(commitMessage || '').trim();
+    let mainCommitSkipped = false;
+
+    if (commitMode === 'never') {
+      mainCommitSkipped = true;
+      if (!fullMessage) {
+        try {
+          fullMessage = String(await mainGit.raw(['log', '-1', '--pretty=%s'])).trim();
+        } catch (_) {}
+      }
+      if (!fullMessage) fullMessage = 'Update';
+    } else {
+      const mainCommit = await stageAndCommit(mainGit, fullMessage || 'Update', mainConfig);
+      if (!mainCommit.success) {
+        const noChanges = /没有可提交的变更/.test(String(mainCommit.error || ''));
+        if (commitMode === 'required' || !noChanges) {
+          return { success: false, error: mainCommit.error || '主仓库提交失败', message: mainCommit.message };
+        }
+        mainCommitSkipped = true;
+        try {
+          fullMessage = String(await mainGit.raw(['log', '-1', '--pretty=%s'])).trim() || fullMessage || 'Update';
+        } catch (_) {
+          fullMessage = fullMessage || 'Update';
+        }
+      } else {
+        fullMessage = mainCommit.message;
+      }
     }
 
-    const fullMessage = mainCommit.message;
     const envOverrides = buildGitEnvOverrides(mainConfig);
     const pushRes = await runGitCommand(mainRepoPath, ['push', 'origin'], envOverrides);
     if (!pushRes.success) {
@@ -1182,7 +1215,12 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinates, commitMes
     }
 
     if (subList.length === 0) {
-      return { success: true, message: fullMessage, results: [] };
+      return {
+        success: true,
+        message: fullMessage,
+        mainCommitSkipped,
+        results: []
+      };
     }
 
     let mainRemoteUrl = '';
@@ -1270,6 +1308,7 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinates, commitMes
       success: allOk,
       error: allOk ? undefined : results.find((r) => !r.success)?.error,
       message: fullMessage,
+      mainCommitSkipped,
       results
     };
   } catch (error) {

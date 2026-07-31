@@ -124,9 +124,9 @@ autoUpdater.autoInstallOnAppQuit = true;
 delete process.env.GH_TOKEN;
 delete process.env.GITHUB_TOKEN;
 
-const CHECK_TIMEOUT_MS = 30000;
+const CHECK_TIMEOUT_MS = 20000;
 let isCheckingUpdate = false;
-let updateProxyActive = false;
+const UPDATE_PROXY_ENV_KEYS = ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY', 'all_proxy'];
 
 function loadAppConfig() {
   try {
@@ -141,18 +141,79 @@ function getUpdateProxyPort() {
   return (port > 0 && port <= 65535) ? port : 0;
 }
 
-async function setUpdateProxyEnabled(enabled) {
-  const ses = session.defaultSession;
-  if (enabled) {
+/** electron-updater 走独立分区 session，只改 defaultSession 不会生效 */
+function getUpdateSessions() {
+  const list = [session.defaultSession];
+  try {
+    const updaterSes = autoUpdater.netSession;
+    if (updaterSes && updaterSes !== session.defaultSession) list.push(updaterSes);
+  } catch (_) {}
+  return list;
+}
+
+function clearUpdateProxyEnv() {
+  for (const key of UPDATE_PROXY_ENV_KEYS) delete process.env[key];
+}
+
+function applyUpdateProxyEnv(port) {
+  const url = `http://127.0.0.1:${port}`;
+  process.env.HTTP_PROXY = url;
+  process.env.HTTPS_PROXY = url;
+  process.env.http_proxy = url;
+  process.env.https_proxy = url;
+  process.env.ALL_PROXY = url;
+  process.env.all_proxy = url;
+  process.env.NO_PROXY = '127.0.0.1,localhost,::1';
+  process.env.no_proxy = '127.0.0.1,localhost,::1';
+}
+
+/** @param {'proxy'|'system'|'direct'} mode */
+async function setUpdateNetworkMode(mode) {
+  const sessions = getUpdateSessions();
+  if (mode === 'proxy') {
     const port = getUpdateProxyPort();
     if (!port) return false;
-    await ses.setProxy({ proxyRules: `http://127.0.0.1:${port}` });
-    updateProxyActive = true;
+    const proxyRules = `http=127.0.0.1:${port};https=127.0.0.1:${port}`;
+    for (const ses of sessions) {
+      await ses.setProxy({ proxyRules, proxyBypassRules: '<local>' });
+      try { ses.closeAllConnections(); } catch (_) {}
+    }
+    applyUpdateProxyEnv(port);
     return true;
   }
-  await ses.setProxy({ mode: 'direct' });
-  updateProxyActive = false;
+  if (mode === 'system') {
+    for (const ses of sessions) {
+      await ses.setProxy({ mode: 'system' });
+      try { ses.closeAllConnections(); } catch (_) {}
+    }
+    clearUpdateProxyEnv();
+    return true;
+  }
+  for (const ses of sessions) {
+    await ses.setProxy({ mode: 'direct' });
+    try { ses.closeAllConnections(); } catch (_) {}
+  }
+  clearUpdateProxyEnv();
   return true;
+}
+
+async function probeLocalProxyPort(port, timeoutMs = 1500) {
+  const net = require('net');
+  return new Promise((resolve) => {
+    const socket = net.connect({ host: '127.0.0.1', port }, () => {
+      socket.destroy();
+      resolve(true);
+    });
+    const timer = setTimeout(() => {
+      socket.destroy();
+      resolve(false);
+    }, timeoutMs);
+    socket.on('error', () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+    socket.on('connect', () => clearTimeout(timer));
+  });
 }
 
 function shortUpdateError(err) {
@@ -188,12 +249,13 @@ function formatErrorForLog(err) {
   return `[错误] ${shortUpdateError(err)}`;
 }
 
-/** 有代理时优先走代理，失败再直连；无代理则只直连 */
+/** 有端口：本地代理 → 系统代理 → 直连；无端口：系统代理 → 直连 */
 function getUpdateNetworkAttempts() {
   const port = getUpdateProxyPort();
   const attempts = [];
-  if (port) attempts.push({ useProxy: true, label: `代理 ${port}` });
-  attempts.push({ useProxy: false, label: '直连' });
+  if (port) attempts.push({ mode: 'proxy', label: `代理 ${port}`, port });
+  attempts.push({ mode: 'system', label: '系统代理' });
+  attempts.push({ mode: 'direct', label: '直连' });
   return attempts;
 }
 
@@ -293,10 +355,15 @@ async function performUpdateCheck() {
 
   for (let i = 0; i < attempts.length; i++) {
     const attempt = attempts[i];
-    await setUpdateProxyEnabled(attempt.useProxy);
-    if (attempt.useProxy) {
-      sendUpdateLog(`更新: 已启用本地代理 127.0.0.1:${getUpdateProxyPort()}`, 'info');
+    if (attempt.mode === 'proxy') {
+      const up = await probeLocalProxyPort(attempt.port);
+      if (!up) {
+        sendUpdateLog(`更新: 代理 ${attempt.port} 端口未监听，跳过`, 'warning');
+        continue;
+      }
+      sendUpdateLog(`更新: 已启用本地代理 127.0.0.1:${attempt.port}（含 updater session）`, 'info');
     }
+    await setUpdateNetworkMode(attempt.mode);
     sendUpdateLog(`更新: 检查中（${attempt.label}）`, 'info');
     try {
       await checkForUpdatesWithTimeout();
@@ -382,7 +449,14 @@ ipcMain.handle('download-update', async () => {
 
   for (let i = 0; i < attempts.length; i++) {
     const attempt = attempts[i];
-    await setUpdateProxyEnabled(attempt.useProxy);
+    if (attempt.mode === 'proxy') {
+      const up = await probeLocalProxyPort(attempt.port);
+      if (!up) {
+        sendUpdateLog(`更新: 代理 ${attempt.port} 端口未监听，跳过下载尝试`, 'warning');
+        continue;
+      }
+    }
+    await setUpdateNetworkMode(attempt.mode);
     sendUpdateLog(`更新: 开始下载（${attempt.label}）`, 'info');
     try {
       await autoUpdater.downloadUpdate();

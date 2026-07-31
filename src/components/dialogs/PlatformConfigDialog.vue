@@ -72,7 +72,7 @@ onMounted(async () => {
         max="65535"
         placeholder="如 7890（Clash / V2Ray 本地 HTTP 端口）"
       >
-      <small class="form-hint">检查或下载更新直连失败时，自动改用 127.0.0.1:该端口 重试</small>
+      <small class="form-hint">写入 electron-updater 专用会话（含检查与下载）。Clash 开着 7890 即可，一般不必再开系统代理；失败时会依次试系统代理、直连。</small>
     </div>
 
     <div class="platform-tabs">

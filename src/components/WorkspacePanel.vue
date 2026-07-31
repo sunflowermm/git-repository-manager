@@ -24,6 +24,9 @@ const {
   viewDiff,
   openRepoFolder,
   updateCurrentRepoInfo,
+  composeCommitPreview,
+  refreshCommitStamp,
+  regenerateCommitMessage,
   log
 } = store;
 
@@ -52,6 +55,7 @@ const changeFiles = computed(() =>
     change: getFileChangeType(file)
   }))
 );
+const commitPreview = computed(() => composeCommitPreview());
 
 function openClone() {
   openModal({ type: 'clone', title: '克隆仓库' });
@@ -126,9 +130,48 @@ async function refreshChanges() {
         <div class="commit-section">
           <div class="section-header">
             <h3>快速提交</h3>
-            <span class="kbd-hint">Ctrl + Enter</span>
+            <div class="commit-header-actions">
+              <button
+                class="btn btn-sm btn-secondary"
+                type="button"
+                title="刷新时间戳与变更摘要，不清空正文"
+                @click="regenerateCommitMessage"
+              >
+                <AppIcon name="refresh" :size="13" /> 刷新时间/摘要
+              </button>
+              <span class="kbd-hint">Ctrl + Enter</span>
+            </div>
           </div>
-          <textarea v-model="state.commitMessage" class="commit-textarea" placeholder="输入提交信息…" rows="2" />
+
+          <div class="commit-compose">
+            <div class="commit-compose__row">
+              <span class="commit-compose__label">时间</span>
+              <code class="commit-compose__stamp">Update: {{ state.commitStamp || '—' }}</code>
+              <button class="btn btn-sm btn-secondary" type="button" title="只更新时间戳" @click="refreshCommitStamp">
+                刷新时间
+              </button>
+            </div>
+            <div class="commit-compose__row commit-compose__row--note">
+              <span class="commit-compose__label">说明</span>
+              <textarea
+                v-model="state.commitNote"
+                class="commit-textarea commit-textarea--note"
+                placeholder="写在时间与变更摘要之间（可选）…"
+                rows="2"
+              />
+            </div>
+            <div class="commit-compose__row">
+              <span class="commit-compose__label">摘要</span>
+              <span class="commit-compose__summary" :title="state.commitSummary || '暂无变更统计'">
+                {{ state.commitSummary || '（暂无变更统计，刷新仓库后更新）' }}
+              </span>
+            </div>
+            <div class="commit-compose__preview" :title="commitPreview">
+              <span class="commit-compose__label">预览</span>
+              <span class="commit-compose__preview-text">{{ commitPreview }}</span>
+            </div>
+          </div>
+
           <div class="commit-buttons">
             <button class="btn btn-success" type="button" :disabled="state.busy" @click="quickCommit">
               {{ state.busy ? '处理中…' : '一键提交' }}

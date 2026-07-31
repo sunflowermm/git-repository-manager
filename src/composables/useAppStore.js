@@ -101,7 +101,12 @@ const state = reactive({
   panelSizes: null,
   appVersion: '',
   searchTerm: '',
-  commitMessage: '',
+  /** Update: 后面的时间戳；可单独刷新，自动刷新不改 */
+  commitStamp: '',
+  /** 用户正文，夹在时间与变更摘要之间；刷新绝不覆盖 */
+  commitNote: '',
+  /** 变更摘要预览（提交时主进程会按真实 status 再拼一次） */
+  commitSummary: '',
   repoInfo: null,
   logs: [],
   modal: null,
@@ -220,8 +225,8 @@ export function useAppStore() {
     return sanitizeConfig(state.platformConfig[platform] || {});
   }
 
-  function setDefaultCommitMessage(status) {
-    const dateStr = new Date().toLocaleString('zh-CN', {
+  function formatCommitStamp(date = new Date()) {
+    return date.toLocaleString('zh-CN', {
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
@@ -229,7 +234,45 @@ export function useAppStore() {
       minute: '2-digit',
       second: '2-digit'
     });
-    state.commitMessage = `Update: ${dateStr}${buildChangeSummaryFromStatus(status)}`;
+  }
+
+  /** 发给 git 的正文：Update: 时间 + 可选用户说明（摘要由主进程提交时再拼） */
+  function composeCommitPayload() {
+    const stamp = (state.commitStamp || formatCommitStamp()).trim();
+    const note = state.commitNote.trim();
+    return note ? `Update: ${stamp} ${note}` : `Update: ${stamp}`;
+  }
+
+  /** UI 预览：时间 + 说明 + 摘要 */
+  function composeCommitPreview() {
+    return `${composeCommitPayload()}${state.commitSummary || ''}`;
+  }
+
+  function refreshCommitStamp() {
+    state.commitStamp = formatCommitStamp();
+  }
+
+  function refreshCommitSummary(status) {
+    state.commitSummary = buildChangeSummaryFromStatus(status ?? state.repoInfo?.status);
+  }
+
+  function resetCommitComposer(status, { clearNote = false } = {}) {
+    refreshCommitStamp();
+    refreshCommitSummary(status);
+    if (clearNote) state.commitNote = '';
+  }
+
+  function setDefaultCommitMessage(status, { force = false } = {}) {
+    // 兼容旧调用：只刷新时间戳与摘要，默认不清正文
+    if (force) refreshCommitStamp();
+    else if (!state.commitStamp) refreshCommitStamp();
+    refreshCommitSummary(status);
+  }
+
+  function regenerateCommitMessage() {
+    refreshCommitStamp();
+    refreshCommitSummary(state.repoInfo?.status);
+    log('已刷新提交时间与变更摘要（正文未改）', 'info');
   }
 
   function checkRepoSelected() {
@@ -291,8 +334,9 @@ export function useAppStore() {
           hasChanges: (info.status.files || []).length > 0
         });
       }
-      const cur = state.commitMessage.trim();
-      if (!cur || /^Update:/.test(cur)) setDefaultCommitMessage(info.status);
+      // 刷新只更新变更摘要；时间戳与用户正文保留
+      refreshCommitSummary(info.status);
+      if (!state.commitStamp) refreshCommitStamp();
     } catch (error) {
       if (!silent) log(`获取仓库信息失败: ${error.message}`, 'error');
     }
@@ -303,6 +347,8 @@ export function useAppStore() {
     const latest = state.repos.find((r) => r.path === repo.path) || repo;
     state.selectionNonce++;
     state.currentRepo = latest;
+    state.commitNote = '';
+    refreshCommitStamp();
     log(`已选择仓库: ${latest.name}`, 'info');
     await updateCurrentRepoInfo();
   }
@@ -390,14 +436,12 @@ export function useAppStore() {
   }
 
   async function getCommitMessage() {
-    let message = state.commitMessage.trim();
-    if (!message || message.startsWith('Update:')) {
-      const defaultValue = message || `Update: ${new Date().toLocaleString('zh-CN')}`;
-      const input = await openInput('提交信息', '请输入提交信息:', defaultValue, '提交信息');
-      if (!input) return null;
-      message = input;
-    }
-    return message;
+    const message = composeCommitPayload().trim();
+    if (message) return message;
+    const defaultValue = `Update: ${formatCommitStamp()}`;
+    const input = await openInput('提交信息', '请输入提交信息:', defaultValue, '提交信息');
+    if (!input) return null;
+    return input.trim();
   }
 
   async function executeCommit(repoPath, message, config) {
@@ -435,7 +479,9 @@ export function useAppStore() {
         logRepo(repo.name, `推送成功（提交: ${oneLine(realMsg)}）`, 'success');
       }
       showRepoMessage(repo.name, `${actionLabel}成功`, 'success');
-      if (nonce === state.selectionNonce) setDefaultCommitMessage();
+      if (nonce === state.selectionNonce) {
+        resetCommitComposer(undefined, { clearNote: true });
+      }
       await refreshRepoList(true);
     } catch (error) {
       logRepo(repo.name, `${actionLabel}失败: ${error.message}`, 'error');
@@ -517,7 +563,9 @@ export function useAppStore() {
       const total = (syncResult.results || []).length;
       logRepo(mainRepo.name, `同步完成 ${okCount}/${total}；提交信息: ${realMsg}`, 'success');
       showRepoMessage(mainRepo.name, `同步完成 ${okCount}/${total}\n${realMsg}`, 'success');
-      if (nonce === state.selectionNonce) setDefaultCommitMessage();
+      if (nonce === state.selectionNonce) {
+        resetCommitComposer(undefined, { clearNote: true });
+      }
       await refreshRepoList(true);
     } catch (error) {
       logRepo(mainRepo.name, `同步失败: ${error.message}`, 'error');
@@ -721,7 +769,7 @@ export function useAppStore() {
         log(`Git: ${gitCheck.version}`, 'success');
       }
       await loadConfig();
-      setDefaultCommitMessage();
+      resetCommitComposer();
       startAutoRefresh();
     } finally {
       state.isBootstrapping = false;
@@ -745,6 +793,12 @@ export function useAppStore() {
     getSubordinates,
     getRepoConfigFor,
     setDefaultCommitMessage,
+    composeCommitPreview,
+    composeCommitPayload,
+    refreshCommitStamp,
+    refreshCommitSummary,
+    regenerateCommitMessage,
+    resetCommitComposer,
     refreshRepoList,
     updateCurrentRepoInfo,
     selectRepo,

@@ -569,7 +569,8 @@ body {
 }
 
 .panel-middle > .panel-body {
-    display: block;
+    display: flex;
+    flex-direction: column;
     overflow-x: hidden;
     overflow-y: auto;
     scrollbar-gutter: stable;
@@ -591,6 +592,7 @@ body {
     align-items: center;
     justify-content: center;
     text-align: center;
+    flex: 1 0 auto;
     min-height: 280px;
     height: 100%;
     padding: 32px 16px;
@@ -987,6 +989,7 @@ select {
     flex-direction: column;
     gap: 6px;
     margin-bottom: 8px;
+    flex-shrink: 0;
 }
 
 .repo-info__meta {
@@ -1088,9 +1091,9 @@ select {
     font-weight: 500;
 }
 
-/* 文件变更：固定高度，不被上方预览/表单挤扁；列表区内滚 */
+/* 文件变更：吃掉中间栏剩余高度（全屏撑满）；矮窗有 min-height；列表区内滚 */
 .changes-section {
-    --changes-section-height: 260px;
+    --changes-section-min: 360px;
     background: var(--bg-tertiary);
     padding: var(--space-2) var(--space-3);
     border-radius: var(--radius-lg);
@@ -1098,14 +1101,8 @@ select {
     margin-top: var(--space-2);
     display: flex;
     flex-direction: column;
-    flex: none;
-    height: var(--changes-section-height);
-    min-height: var(--changes-section-height);
-    max-height: var(--changes-section-height);
-}
-
-.changes-section--empty {
-    flex: none;
+    flex: 1 1 auto;
+    min-height: var(--changes-section-min);
 }
 
 .section-header {
@@ -2439,8 +2436,8 @@ body::before {
 .workspace-active {
     display: flex;
     flex-direction: column;
-    min-height: min-content;
-    /* 不占满再 flex 压缩底部；内容变高时由中间栏整体滚动 */
+    flex: 1 0 auto;
+    min-height: 100%;
 }
 
 .ops-grid .btn {
@@ -2500,7 +2497,7 @@ body::before {
     box-shadow: var(--focus-ring);
 }
 
-/* —— 工作区高度密度：小窗收紧间距；变更区保持固定高度 —— */
+/* —— 工作区高度密度：小窗收紧间距；变更区仍占剩余高度 —— */
 
 @container workspace (max-height: 640px) {
     .panel-middle > .panel-body {
@@ -2525,7 +2522,7 @@ body::before {
     }
 
     .changes-section {
-        --changes-section-height: 200px;
+        --changes-section-min: 240px;
     }
 
     .section-header {
@@ -2658,7 +2655,7 @@ body::before {
     }
 
     .changes-section {
-        --changes-section-height: 160px;
+        --changes-section-min: 180px;
     }
 }
 

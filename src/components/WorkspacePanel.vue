@@ -168,9 +168,9 @@ async function refreshChanges() {
                 {{ state.commitSummary || '（暂无变更统计，刷新仓库后更新）' }}
               </span>
             </div>
-            <div class="commit-compose__preview" :title="commitPreview">
+            <div class="commit-compose__row commit-compose__row--preview">
               <span class="commit-compose__label">预览</span>
-              <span class="commit-compose__preview-text">{{ commitPreview }}</span>
+              <span class="commit-compose__preview-text" :title="commitPreview">{{ commitPreview }}</span>
             </div>
           </div>
 

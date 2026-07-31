@@ -1417,14 +1417,17 @@ select {
 
 .commit-buttons {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 8px;
 }
 
 .commit-buttons .btn {
     justify-content: center;
     font-size: 12px;
-    padding: 6px 10px;
+    padding: 6px 8px;
+    border: none;
+    color: #fff;
+    white-space: nowrap;
 }
 
 /* 日志容器 */
@@ -2220,7 +2223,12 @@ select {
         grid-template-columns: repeat(5, minmax(0, 1fr));
     }
     .commit-buttons {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 6px;
+    }
+    .commit-buttons .btn {
+        font-size: 11px;
+        padding: 6px 4px;
     }
     .repo-info__meta {
         flex-wrap: wrap;
@@ -2635,11 +2643,10 @@ body::before {
     }
 
     .commit-buttons {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .commit-compose__row:not(.commit-compose__row--note) {
         flex-wrap: wrap;
     }
 }
-

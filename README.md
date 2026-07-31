@@ -2,7 +2,7 @@
 
 基于 **Electron + Vue 3** 的桌面端 Git 仓库管理工具。统一管理 GitHub / Gitee / GitCode / GitLab 等平台上的本地仓库，支持一键提交、推送、主从同步与自动更新。
 
-当前发行版：**v1.2.11**
+当前发行版：**v1.2.12**
 
 ## 界面预览
 
@@ -214,7 +214,7 @@ git config --global user.email "your@email.com"
 
 ## 更新日志
 
-详见 [history/](history/)（如 [v1.2.11](history/v1.2.11.md)）。界面截图见 [docs/screenshots/](docs/screenshots/)。
+详见 [history/](history/)（如 [v1.2.12](history/v1.2.12.md)）。界面截图见 [docs/screenshots/](docs/screenshots/)。
 
 ## 贡献
 

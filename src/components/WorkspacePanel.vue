@@ -189,7 +189,7 @@ async function refreshChanges() {
               提交并同步
             </button>
             <button
-              class="btn btn-secondary"
+              class="btn btn-primary"
               type="button"
               :disabled="state.busy"
               title="不新建提交：推送主仓当前状态并复制到从仓"

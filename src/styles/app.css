@@ -521,6 +521,12 @@ body {
     min-width: 0;
 }
 
+/* 工作区按面板实际高度分档密度（标题栏+工具栏后中间栏常 < 窗口高） */
+.panel-middle {
+    container-type: size;
+    container-name: workspace;
+}
+
 .panel-header {
     background: var(--bg-tertiary);
     padding: 8px 12px;
@@ -1084,29 +1090,78 @@ select {
 /* 文件变更区域（置于快速操作下） */
 .changes-section {
     background: var(--bg-tertiary);
-    padding: var(--space-3);
+    padding: var(--space-2) var(--space-3);
     border-radius: var(--radius-lg);
     border: 1px solid var(--border-color);
     margin-top: var(--space-2);
     display: flex;
     flex-direction: column;
-    flex: 1;
-    min-height: 200px;
+    flex: 1 1 0;
+    min-height: 0;
+}
+
+.changes-section--empty {
+    flex: 1 1 0;
 }
 
 .section-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 10px;
+    gap: 8px;
+    margin-bottom: 6px;
+    flex-shrink: 0;
+    min-height: 0;
 }
 
 .section-header h3 {
-    font-size: 14px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
     color: var(--primary);
     margin: 0;
     font-weight: 600;
+    line-height: 1.2;
     transition: color var(--transition-normal) ease;
+}
+
+.section-header--changes {
+    margin-bottom: 4px;
+    padding-bottom: 0;
+}
+
+.section-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.35em;
+    height: 1.35em;
+    padding: 0 5px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+}
+
+.section-count:not([data-empty]) {
+    color: #fff;
+    background: var(--primary);
+    border-color: transparent;
+}
+
+.btn-icon-refresh {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.btn-label {
+    display: inline;
 }
 
 .commit-header-actions {
@@ -1203,13 +1258,20 @@ select {
 
 .changes-list {
     max-height: none;
-    flex: 1;
-    min-height: 180px;
+    flex: 1 1 0;
+    min-height: 0;
     overflow-y: auto;
     background: var(--bg-secondary);
     border-radius: 6px;
-    padding: 8px;
-    border: 1.5px solid var(--border-color);
+    padding: 6px;
+    border: 1px solid var(--border-color);
+}
+
+.changes-section--empty .changes-list {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 48px;
 }
 
 .change-item {
@@ -1260,16 +1322,21 @@ select {
 /* 操作按钮组 */
 .operations-section {
     background: var(--bg-tertiary);
-    padding: var(--space-3);
+    padding: var(--space-2) var(--space-3);
     border-radius: var(--radius-lg);
     border: 1px solid var(--border-color);
     margin-top: var(--space-2);
+    flex-shrink: 0;
+}
+
+.operations-section .section-header {
+    margin-bottom: 6px;
 }
 
 .operations-section h3 {
     font-size: 13px;
     color: var(--primary);
-    margin-bottom: 8px;
+    margin: 0;
     font-weight: 600;
     transition: color var(--transition-normal) ease;
 }
@@ -1308,15 +1375,20 @@ select {
 /* 提交区域 */
 .commit-section {
     background: var(--bg-tertiary);
-    padding: 10px;
+    padding: var(--space-2) var(--space-3);
     border-radius: 8px;
     border: 1px solid var(--border-color);
     margin-top: 0;
+    flex-shrink: 0;
+}
+
+.commit-section .section-header {
+    margin-bottom: 6px;
 }
 
 .commit-section h3 {
     font-size: 13px;
-    margin-bottom: 8px;
+    margin: 0;
     color: var(--primary);
     font-weight: 600;
     transition: color var(--transition-normal) ease;
@@ -2180,8 +2252,9 @@ select {
     padding: 40px 16px;
 }
 
-.changes-list .empty-state {
-    padding: 15px;
+.changes-list .empty-state,
+.empty-state--changes {
+    padding: 10px 8px;
     font-size: 12px;
 }
 
@@ -2394,3 +2467,179 @@ body::before {
 .commit-textarea:focus {
     box-shadow: var(--focus-ring);
 }
+
+/* —— 工作区高度密度：小窗优先把高度让给「文件变更」内容 —— */
+
+@container workspace (max-height: 640px) {
+    .panel-middle > .panel-body {
+        padding: 8px;
+    }
+
+    .repo-info {
+        margin-bottom: 6px;
+        gap: 4px;
+    }
+
+    .info-chip,
+    .repo-info__remote {
+        padding: 3px 6px;
+    }
+
+    .commit-section,
+    .operations-section,
+    .changes-section {
+        padding: 6px 8px;
+        margin-top: 6px;
+    }
+
+    .section-header {
+        margin-bottom: 4px;
+    }
+
+    .section-header h3,
+    .commit-section h3,
+    .operations-section h3 {
+        font-size: 12px;
+    }
+
+    .section-header--changes {
+        margin-bottom: 2px;
+    }
+
+    .commit-compose {
+        gap: 5px;
+        margin-bottom: 6px;
+    }
+
+    .commit-compose__preview {
+        display: none;
+    }
+
+    .commit-textarea--note {
+        min-height: 32px;
+        padding: 5px 8px;
+        font-size: 12px;
+    }
+
+    .commit-buttons {
+        gap: 6px;
+    }
+
+    .commit-buttons .btn {
+        min-height: 30px;
+        padding: 4px 8px;
+    }
+
+    .ops-grid {
+        gap: 5px;
+    }
+
+    .ops-grid .btn {
+        min-height: 28px;
+        padding: 3px 6px;
+        font-size: 12px;
+        border-width: 1px;
+    }
+
+    .kbd-hint {
+        display: none;
+    }
+
+    .changes-list {
+        padding: 4px;
+    }
+
+    .empty-state--changes {
+        padding: 6px 4px;
+    }
+
+    .change-item {
+        padding: 4px 8px;
+        margin-bottom: 2px;
+    }
+}
+
+@container workspace (max-height: 520px) {
+    .panel-header {
+        padding: 5px 10px;
+    }
+
+    .panel-header h2 {
+        font-size: 12px;
+    }
+
+    .commit-section .btn-label,
+    .changes-section .btn-label {
+        display: none;
+    }
+
+    .btn-icon-refresh {
+        padding: 4px 7px;
+    }
+
+    .commit-compose__row:has(.commit-compose__stamp) .btn {
+        padding: 3px 6px;
+        font-size: 11px;
+    }
+
+    .commit-compose__label {
+        flex-basis: 2em;
+        font-size: 11px;
+        line-height: 24px;
+    }
+
+    .section-count {
+        min-width: 1.2em;
+        height: 1.2em;
+        font-size: 10px;
+        padding: 0 4px;
+    }
+
+    .operations-section .section-header {
+        margin-bottom: 4px;
+    }
+
+    .ops-grid {
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 4px;
+    }
+
+    .ops-grid .btn {
+        min-height: 26px;
+        font-size: 11px;
+    }
+}
+
+@container workspace (max-height: 420px) {
+    .repo-info__remote {
+        display: none;
+    }
+
+    .commit-compose__summary {
+        font-size: 11px;
+    }
+
+    .operations-section {
+        max-height: 88px;
+        overflow-y: auto;
+    }
+
+    .changes-section {
+        min-height: 72px;
+    }
+}
+
+@container workspace (max-width: 420px) {
+    .ops-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .commit-buttons {
+        grid-template-columns: 1fr;
+    }
+
+    .commit-compose__row:not(.commit-compose__row--note) {
+        flex-wrap: wrap;
+    }
+}
+

@@ -128,7 +128,7 @@ async function refreshChanges() {
         </div>
 
         <div class="commit-section">
-          <div class="section-header">
+          <div class="section-header section-header--commit">
             <h3>快速提交</h3>
             <div class="commit-header-actions">
               <button
@@ -137,7 +137,8 @@ async function refreshChanges() {
                 title="刷新时间戳与变更摘要，不清空正文"
                 @click="regenerateCommitMessage"
               >
-                <AppIcon name="refresh" :size="13" /> 刷新时间/摘要
+                <AppIcon name="refresh" :size="13" />
+                <span class="btn-label">刷新时间/摘要</span>
               </button>
               <span class="kbd-hint">Ctrl + Enter</span>
             </div>
@@ -182,7 +183,9 @@ async function refreshChanges() {
         </div>
 
         <div class="operations-section">
-          <h3>快速操作</h3>
+          <div class="section-header section-header--ops">
+            <h3>快速操作</h3>
+          </div>
           <div class="ops-grid">
             <button class="btn btn-secondary btn-op" type="button" :disabled="state.busy" @click="pullChanges">拉取</button>
             <button class="btn btn-secondary btn-op" type="button" :disabled="state.busy" @click="pullChangesForce">强制拉取</button>
@@ -197,15 +200,30 @@ async function refreshChanges() {
           </div>
         </div>
 
-        <div class="changes-section">
-          <div class="section-header">
-            <h3>文件变更</h3>
-            <button class="btn btn-sm btn-secondary" type="button" @click="refreshChanges">
-              <AppIcon name="refresh" :size="13" /> 刷新
+        <div
+          class="changes-section"
+          :class="{ 'changes-section--empty': !changeFiles.length }"
+        >
+          <div class="section-header section-header--changes">
+            <h3>
+              文件变更
+              <span class="section-count" :data-empty="changeFiles.length === 0 ? '1' : null">
+                {{ changeFiles.length }}
+              </span>
+            </h3>
+            <button
+              class="btn btn-sm btn-secondary btn-icon-refresh"
+              type="button"
+              title="刷新文件变更"
+              aria-label="刷新文件变更"
+              @click="refreshChanges"
+            >
+              <AppIcon name="refresh" :size="13" />
+              <span class="btn-label">刷新</span>
             </button>
           </div>
           <div class="changes-list">
-            <div v-if="!changeFiles.length" class="empty-state">暂无变更</div>
+            <div v-if="!changeFiles.length" class="empty-state empty-state--changes">暂无变更</div>
             <div v-for="(file, i) in changeFiles" :key="file.path + '-' + i" class="change-item">
               <span class="change-icon" :title="file.change.label" :data-kind="file.change.icon">
                 <AppIcon :name="file.change.icon" :size="15" />

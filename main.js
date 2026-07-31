@@ -1099,10 +1099,12 @@ function shouldSyncIgnore(name) {
   return false;
 }
 
-/** 主仓应同步的路径：已跟踪 + 未忽略的未跟踪（尊重 .gitignore，不含本地业务 Core 等） */
+/** 主仓应同步的路径：提交后工作区应干净，只取已跟踪文件（尊重 .gitignore） */
 async function listSyncablePaths(repoPath) {
   const git = simpleGit(repoPath);
-  const raw = await git.raw(['ls-files', '-c', '-o', '--exclude-standard', '-z']);
+  // 主从同步在 stageAndCommit(主仓) 之后调用；-c 即可。
+  // 若改用 -c -o --exclude-standard，在有未提交未忽略文件时也会带上，略慢约 5%。
+  const raw = await git.raw(['ls-files', '-c', '-z']);
   return String(raw || '')
     .split('\0')
     .map((s) => s.trim())

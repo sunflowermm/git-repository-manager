@@ -1344,29 +1344,23 @@ select {
 .ops-grid {
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 6px;
+    gap: var(--space-2);
 }
 
-.ops-grid .btn,
-.btn-op {
+.ops-grid .btn {
     padding: 5px 6px;
     font-size: 12px;
     justify-content: center;
-    min-height: 32px;
-    border-width: 2px;
+    min-height: var(--btn-height);
+    border-width: 1px;
     border-style: solid;
-}
-
-.ops-grid .btn-secondary,
-.btn-op.btn-secondary {
     border-color: color-mix(in srgb, var(--primary) 35%, var(--border-color));
     background: var(--bg-secondary);
     color: var(--text-primary);
     box-shadow: none;
 }
 
-.ops-grid .btn-secondary:hover:not(:disabled),
-.btn-op.btn-secondary:hover:not(:disabled) {
+.ops-grid .btn:hover:not(:disabled) {
     border-color: var(--primary);
     background: color-mix(in srgb, var(--primary) 10%, var(--bg-secondary));
     color: var(--primary-dark);
@@ -1376,7 +1370,7 @@ select {
 .commit-section {
     background: var(--bg-tertiary);
     padding: var(--space-2) var(--space-3);
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     border: 1px solid var(--border-color);
     margin-top: 0;
     flex-shrink: 0;
@@ -1418,17 +1412,36 @@ select {
 .commit-buttons {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 8px;
+    gap: var(--space-2);
 }
 
-.commit-buttons .btn {
+.commit-buttons .btn-commit {
     justify-content: center;
-    font-size: 12px;
+    min-height: 36px;
     padding: 6px 8px;
     border: none;
+    border-radius: var(--btn-radius);
+    font-size: 12px;
+    font-weight: 600;
     color: #fff;
     white-space: nowrap;
+    box-shadow: none;
 }
+
+.commit-buttons .btn-commit:hover:not(:disabled) {
+    filter: brightness(1.06);
+    box-shadow: 0 2px 8px var(--shadow);
+}
+
+.commit-buttons .btn-commit:active:not(:disabled) {
+    filter: brightness(0.96);
+    box-shadow: none;
+}
+
+.commit-buttons .btn-commit--ok { background: var(--success); }
+.commit-buttons .btn-commit--push { background: var(--info); }
+.commit-buttons .btn-commit--sync { background: var(--warning); }
+.commit-buttons .btn-commit--mirror { background: var(--primary); }
 
 /* 日志容器 */
 .log-container {
@@ -2223,10 +2236,9 @@ select {
         grid-template-columns: repeat(5, minmax(0, 1fr));
     }
     .commit-buttons {
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 6px;
+        gap: var(--space-2);
     }
-    .commit-buttons .btn {
+    .commit-buttons .btn-commit {
         font-size: 11px;
         padding: 6px 4px;
     }
@@ -2415,12 +2427,6 @@ body::before {
 
 .ops-grid .btn {
     min-height: var(--btn-height);
-    border-width: 2px;
-}
-
-.commit-buttons .btn {
-    min-height: 36px;
-    font-weight: 600;
 }
 
 .log-container {
@@ -2530,12 +2536,12 @@ body::before {
     }
 
     .commit-buttons {
-        gap: 6px;
+        gap: var(--space-1);
     }
 
-    .commit-buttons .btn {
+    .commit-buttons .btn-commit {
         min-height: 30px;
-        padding: 4px 8px;
+        padding: 4px 6px;
     }
 
     .ops-grid {

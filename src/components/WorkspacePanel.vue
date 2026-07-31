@@ -174,13 +174,15 @@ async function refreshChanges() {
             </div>
           </div>
 
-          <div class="commit-buttons">
-            <button class="btn btn-success" type="button" :disabled="state.busy" @click="quickCommit">
+          <div class="commit-buttons" role="group" aria-label="提交与同步">
+            <button class="btn btn-commit btn-commit--ok" type="button" :disabled="state.busy" @click="quickCommit">
               {{ state.busy ? '处理中…' : '一键提交' }}
             </button>
-            <button class="btn btn-info" type="button" :disabled="state.busy" @click="commitAndPush">提交并推送</button>
+            <button class="btn btn-commit btn-commit--push" type="button" :disabled="state.busy" @click="commitAndPush">
+              提交并推送
+            </button>
             <button
-              class="btn btn-warning"
+              class="btn btn-commit btn-commit--sync"
               type="button"
               :disabled="state.busy"
               title="有变更则先提交；无变更也会同步到从仓（适合拉取后）"
@@ -189,7 +191,7 @@ async function refreshChanges() {
               提交并同步
             </button>
             <button
-              class="btn btn-primary"
+              class="btn btn-commit btn-commit--mirror"
               type="button"
               :disabled="state.busy"
               title="不新建提交：推送主仓当前状态并复制到从仓"
@@ -205,16 +207,16 @@ async function refreshChanges() {
             <h3>快速操作</h3>
           </div>
           <div class="ops-grid">
-            <button class="btn btn-secondary btn-op" type="button" :disabled="state.busy" @click="pullChanges">拉取</button>
-            <button class="btn btn-secondary btn-op" type="button" :disabled="state.busy" @click="pullChangesForce">强制拉取</button>
-            <button class="btn btn-secondary btn-op" type="button" :disabled="state.busy" @click="pushChanges">推送</button>
-            <button class="btn btn-secondary btn-op" type="button" :disabled="state.busy" @click="stashChanges">暂存</button>
-            <button class="btn btn-secondary btn-op" type="button" :disabled="state.busy" @click="stashPop">恢复暂存</button>
-            <button class="btn btn-secondary btn-op" type="button" :disabled="state.busy" @click="createBranch">创建分支</button>
-            <button class="btn btn-secondary btn-op" type="button" :disabled="state.busy" @click="switchBranch">切换分支</button>
-            <button class="btn btn-secondary btn-op" type="button" @click="viewLog">查看日志</button>
-            <button class="btn btn-secondary btn-op" type="button" @click="viewDiff">查看差异</button>
-            <button class="btn btn-secondary btn-op" type="button" @click="openRepoFolder()">打开文件夹</button>
+            <button class="btn btn-secondary" type="button" :disabled="state.busy" @click="pullChanges">拉取</button>
+            <button class="btn btn-secondary" type="button" :disabled="state.busy" @click="pullChangesForce">强制拉取</button>
+            <button class="btn btn-secondary" type="button" :disabled="state.busy" @click="pushChanges">推送</button>
+            <button class="btn btn-secondary" type="button" :disabled="state.busy" @click="stashChanges">暂存</button>
+            <button class="btn btn-secondary" type="button" :disabled="state.busy" @click="stashPop">恢复暂存</button>
+            <button class="btn btn-secondary" type="button" :disabled="state.busy" @click="createBranch">创建分支</button>
+            <button class="btn btn-secondary" type="button" :disabled="state.busy" @click="switchBranch">切换分支</button>
+            <button class="btn btn-secondary" type="button" @click="viewLog">查看日志</button>
+            <button class="btn btn-secondary" type="button" @click="viewDiff">查看差异</button>
+            <button class="btn btn-secondary" type="button" @click="openRepoFolder()">打开文件夹</button>
           </div>
         </div>
 

@@ -1246,8 +1246,6 @@ select {
     color: var(--text-primary);
     word-break: break-word;
 }
-    word-break: break-word;
-}
 
 .commit-textarea--note {
     flex: 1;

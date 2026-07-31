@@ -2,7 +2,7 @@
 
 基于 **Electron + Vue 3** 的桌面端 Git 仓库管理工具。统一管理 GitHub / Gitee / GitCode / GitLab 等平台上的本地仓库，支持一键提交、推送、主从同步与自动更新。
 
-当前发行版：**v1.2.9**
+当前发行版：**v1.2.10**
 
 ## 界面预览
 
@@ -125,7 +125,7 @@ npm run publish      # 构建并发布多平台发行版
 同步机制：
 
 - 远程 URL 相同：对从仓库执行 `git pull`
-- 远程 URL 不同：复制主仓库工作区文件（忽略 `.git`、`node_modules` 等）后再推送
+- 远程 URL 不同：按主仓 **gitignore 规则**复制应入库文件（`git ls-files`，不含本地忽略的业务 Core 等），并剔除从仓误跟踪项后再推送
 
 ### 4. 日常操作
 
@@ -182,8 +182,9 @@ git config --global user.email "your@email.com"
 
 ### 同步
 
-- 忽略：`.git`、`node_modules`、`__pycache__`、`.venv`、`dist`、`build` 等
-- 建议先保证主仓库变更已提交再同步
+- 异远程：按主仓 `.gitignore` 复制应入库文件；并剔除从仓「忽略但仍跟踪」的历史项
+- 另跳过硬编码目录名：`.git`、`node_modules`、`.venv`、`dist` 等
+- 建议先保证主仓库变更可提交再同步
 
 ## 故障排除
 
@@ -212,7 +213,7 @@ git config --global user.email "your@email.com"
 
 ## 更新日志
 
-详见 [history/](history/)（如 [v1.2.9](history/v1.2.9.md)）。界面截图见 [docs/screenshots/](docs/screenshots/)。
+详见 [history/](history/)（如 [v1.2.10](history/v1.2.10.md)）。界面截图见 [docs/screenshots/](docs/screenshots/)。
 
 ## 贡献
 

@@ -1099,21 +1099,55 @@ function shouldSyncIgnore(name) {
   return false;
 }
 
-function copyDirWithIgnore(srcDir, destDir) {
-  if (!fs.existsSync(srcDir)) return;
-  const items = fs.readdirSync(srcDir);
-  for (const item of items) {
-    if (shouldSyncIgnore(item)) continue;
-    const srcPath = path.join(srcDir, item);
-    const destPath = path.join(destDir, item);
-    const stat = fs.statSync(srcPath);
-    if (stat.isDirectory()) {
-      if (!fs.existsSync(destPath)) fs.mkdirSync(destPath, { recursive: true });
-      copyDirWithIgnore(srcPath, destPath);
-    } else {
-      fs.copyFileSync(srcPath, destPath);
-    }
+/** 主仓应同步的路径：已跟踪 + 未忽略的未跟踪（尊重 .gitignore，不含本地业务 Core 等） */
+async function listSyncablePaths(repoPath) {
+  const git = simpleGit(repoPath);
+  const raw = await git.raw(['ls-files', '-c', '-o', '--exclude-standard', '-z']);
+  return String(raw || '')
+    .split('\0')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .filter((rel) => {
+      const top = rel.split(/[/\\]/)[0];
+      return !shouldSyncIgnore(top);
+    });
+}
+
+function wipeWorkingTreeKeepGit(dir) {
+  if (!fs.existsSync(dir)) return;
+  for (const name of fs.readdirSync(dir)) {
+    if (name === '.git') continue;
+    fs.rmSync(path.join(dir, name), { recursive: true, force: true });
   }
+}
+
+function copyListedFiles(mainRepoPath, subPath, relPaths) {
+  for (const rel of relPaths) {
+    const src = path.join(mainRepoPath, rel);
+    if (!fs.existsSync(src) || !fs.statSync(src).isFile()) continue;
+    const dest = path.join(subPath, rel);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(src, dest);
+  }
+}
+
+/** 清掉从仓里「已被 .gitignore 忽略但仍在索引中」的历史污染 */
+async function untrackIgnoredFiles(git) {
+  let raw = '';
+  try {
+    raw = await git.raw(['ls-files', '-i', '--exclude-standard', '-z']);
+  } catch (_) {
+    return 0;
+  }
+  const files = String(raw || '').split('\0').map((s) => s.trim()).filter(Boolean);
+  if (!files.length) return 0;
+
+  const chunkSize = 40;
+  for (let i = 0; i < files.length; i += chunkSize) {
+    const chunk = files.slice(i, i + chunkSize);
+    await git.raw(['rm', '-r', '--cached', '-q', '--', ...chunk]);
+  }
+  return files.length;
 }
 
 /**
@@ -1154,6 +1188,8 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinates, commitMes
       mainRemoteUrl = getFirstRemoteUrl(await mainGit.getRemotes(true)).replace(/\/$/, '');
     } catch (e) {}
 
+    const syncPaths = await listSyncablePaths(mainRepoPath);
+
     const results = [];
     for (const item of subList) {
       const subPath = item?.path;
@@ -1187,29 +1223,10 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinates, commitMes
           continue;
         }
 
-        const items = fs.readdirSync(subPath);
-        for (const name of items) {
-          if (name === '.git') continue;
-          const itemPath = path.join(subPath, name);
-          const stat = fs.statSync(itemPath);
-          if (stat.isDirectory()) fs.rmSync(itemPath, { recursive: true, force: true });
-          else fs.unlinkSync(itemPath);
-        }
+        wipeWorkingTreeKeepGit(subPath);
+        copyListedFiles(mainRepoPath, subPath, syncPaths);
 
-        const mainItems = fs.readdirSync(mainRepoPath);
-        for (const name of mainItems) {
-          if (shouldSyncIgnore(name)) continue;
-          const srcPath = path.join(mainRepoPath, name);
-          const destPath = path.join(subPath, name);
-          const stat = fs.statSync(srcPath);
-          if (stat.isDirectory()) {
-            if (!fs.existsSync(destPath)) fs.mkdirSync(destPath, { recursive: true });
-            copyDirWithIgnore(srcPath, destPath);
-          } else {
-            fs.copyFileSync(srcPath, destPath);
-          }
-        }
-
+        const dropped = await untrackIgnoredFiles(subGit);
         const userConfig = effectiveConfig?.username && effectiveConfig?.email
           ? effectiveConfig
           : mainConfig?.username && mainConfig?.email
@@ -1230,8 +1247,8 @@ ipcMain.handle('sync-repos', async (event, mainRepoPath, subordinates, commitMes
           success: true,
           mode: subCommit.skipped ? 'copy-push' : 'copy-commit',
           detail: subCommit.skipped
-            ? '文件已同步，工作区无新增变更，已推送'
-            : `已提交并推送`,
+            ? `文件已同步${dropped ? `（已剔除 ${dropped} 个误跟踪忽略项）` : ''}，工作区无新增变更，已推送`
+            : `已提交并推送${dropped ? `（已剔除 ${dropped} 个误跟踪忽略项）` : ''}`,
           commitMessage: subCommit.skipped ? fullMessage : subCommit.message
         });
       } catch (subErr) {

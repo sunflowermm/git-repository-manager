@@ -569,9 +569,10 @@ body {
 }
 
 .panel-middle > .panel-body {
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
+    display: block;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
 }
 
 .panel-body--list {
@@ -1087,8 +1088,9 @@ select {
     font-weight: 500;
 }
 
-/* 文件变更区域（置于快速操作下） */
+/* 文件变更：固定高度，不被上方预览/表单挤扁；列表区内滚 */
 .changes-section {
+    --changes-section-height: 260px;
     background: var(--bg-tertiary);
     padding: var(--space-2) var(--space-3);
     border-radius: var(--radius-lg);
@@ -1096,12 +1098,14 @@ select {
     margin-top: var(--space-2);
     display: flex;
     flex-direction: column;
-    flex: 1 1 0;
-    min-height: 0;
+    flex: none;
+    height: var(--changes-section-height);
+    min-height: var(--changes-section-height);
+    max-height: var(--changes-section-height);
 }
 
 .changes-section--empty {
-    flex: 1 1 0;
+    flex: none;
 }
 
 .section-header {
@@ -1230,6 +1234,8 @@ select {
     background: color-mix(in srgb, var(--primary) 8%, var(--bg-secondary));
     border: 1px dashed var(--border-color);
     min-width: 0;
+    max-height: 7.5em;
+    overflow-y: auto;
 }
 
 .commit-compose__preview-text {
@@ -1238,6 +1244,8 @@ select {
     font-size: 12px;
     line-height: 1.45;
     color: var(--text-primary);
+    word-break: break-word;
+}
     word-break: break-word;
 }
 
@@ -1257,7 +1265,6 @@ select {
 }
 
 .changes-list {
-    max-height: none;
     flex: 1 1 0;
     min-height: 0;
     overflow-y: auto;
@@ -1271,7 +1278,6 @@ select {
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 48px;
 }
 
 .change-item {
@@ -2421,8 +2427,8 @@ body::before {
 .workspace-active {
     display: flex;
     flex-direction: column;
-    height: 100%;
-    min-height: 0;
+    min-height: min-content;
+    /* 不占满再 flex 压缩底部；内容变高时由中间栏整体滚动 */
 }
 
 .ops-grid .btn {
@@ -2482,7 +2488,7 @@ body::before {
     box-shadow: var(--focus-ring);
 }
 
-/* —— 工作区高度密度：小窗优先把高度让给「文件变更」内容 —— */
+/* —— 工作区高度密度：小窗收紧间距；变更区保持固定高度 —— */
 
 @container workspace (max-height: 640px) {
     .panel-middle > .panel-body {
@@ -2504,6 +2510,10 @@ body::before {
     .changes-section {
         padding: 6px 8px;
         margin-top: 6px;
+    }
+
+    .changes-section {
+        --changes-section-height: 200px;
     }
 
     .section-header {
@@ -2639,7 +2649,7 @@ body::before {
     }
 
     .changes-section {
-        min-height: 72px;
+        --changes-section-height: 160px;
     }
 }
 
